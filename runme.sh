@@ -7,7 +7,7 @@ if [ -z "$1" ]; then
 fi
 
 JIRA_ID="$1"
-EXPORT_DIR=/mnt/c/workspaces/obsidian_vault/_archive/jira-products
+EXPORT_DIR="$VAULT_PATH/jira-products"
 
 python3 -m venv .venv
 source .venv/bin/activate
