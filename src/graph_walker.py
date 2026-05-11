@@ -46,6 +46,12 @@ class GraphWalker:
                 if issue:
                     self._add_node(key, issue, "linked")
 
+        # Step 2b: find children via legacy Parent Link field (cf[17801]).
+        # Older Jira items store the hierarchy on the child issue, not in issuelinks.
+        for issue in self._search_jql_safe(f'cf[17801] = {root_key}'):
+            if issue.key not in self.nodes:
+                self._add_node(issue.key, issue, "linked")
+
         # Step 3: for every Epic in the set, recursively fetch full child tree
         print(f"[3/3] Traversing Epic hierarchies...")
         epics = [k for k, n in self.nodes.items() if self._is_epic(n.issue)]
@@ -102,8 +108,8 @@ class GraphWalker:
 
     def _fetch_epic_children(self, epic_key: str) -> None:
         """Recursively fetch all children of an Epic via JQL."""
-        # Direct children: Epic Link or parent
-        jql = f'"Epic Link" = {epic_key} OR parent = {epic_key}'
+        # Include cf[17801] for older Jira items that store the hierarchy via Parent Link
+        jql = f'"Epic Link" = {epic_key} OR parent = {epic_key} OR cf[17801] = {epic_key}'
         children = self._search_jql(jql)
 
         for child in children:
@@ -121,6 +127,14 @@ class GraphWalker:
             if child.key not in self.nodes:
                 self._add_node(child.key, child, "epic_child")
                 self._fetch_subtasks(child.key)
+
+    def _search_jql_safe(self, jql: str) -> list:
+        """Run a JQL search, returning an empty list on error."""
+        try:
+            return self._search_jql(jql)
+        except Exception as e:
+            print(f"  Warning: JQL query failed ({jql[:80]}): {e}")
+            return []
 
     def _search_jql(self, jql: str) -> list:
         """Run a JQL search and return all results."""

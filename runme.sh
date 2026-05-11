@@ -9,7 +9,7 @@ fi
 JIRA_ID="$1"
 EXPORT_DIR="$VAULT_PATH/jira-products"
 
-python3 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt -q
 
