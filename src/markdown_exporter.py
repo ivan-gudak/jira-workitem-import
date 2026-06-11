@@ -113,6 +113,18 @@ class MarkdownExporter:
                 if hasattr(c, 'author') and hasattr(c.author, 'displayName'):
                     self.scrubber.anonymize_name(c.author.displayName)
 
+        # Register people referenced in any custom field, for consistent User-N numbering
+        for field_id in self.field_names:
+            if not field_id.startswith('customfield_'):
+                continue
+            val = getattr(issue.fields, field_id, None)
+            if val is None:
+                continue
+            items = val if isinstance(val, list) else [val]
+            for item in items:
+                if hasattr(item, 'displayName'):
+                    self.scrubber.anonymize_name(item.displayName)
+
     def _export_one(self, node: IssueNode, all_nodes: dict[str, IssueNode]) -> None:
         """Export a single workitem."""
         issue = node.issue
@@ -205,15 +217,20 @@ class MarkdownExporter:
             lines.append(self.scrubber.scrub_text(self.converter.convert(status_details)))
             lines.append("")
 
-        # Description
+        # Description — or a Details fallback built from custom fields when empty
         description = getattr(issue.fields, 'description', None)
-        if description:
+        if not self._is_empty_description(description):
             lines.append("## Description")
             lines.append("")
             converted = self.converter.convert(description)
             converted = att_handler.replace_attachment_references(converted)
             lines.append(self.scrubber.scrub_text(converted))
             lines.append("")
+        else:
+            details = self._generate_additional_fields(issue, att_handler)
+            if details:
+                lines.append(details)
+                lines.append("")
 
         # Attachments
         if images or others:
