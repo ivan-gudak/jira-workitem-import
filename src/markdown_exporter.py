@@ -57,6 +57,32 @@ class MarkdownExporter:
             return self.scrubber.anonymize_name(value.displayName)
         return self.formatter.format_custom_field(value)
 
+    def _generate_additional_fields(self, issue: Any, att_handler: Any = None) -> str | None:
+        """Render populated custom fields not already shown elsewhere, as a Details section.
+
+        Used as a fallback when the standard description is empty/missing.
+        """
+        excluded = set(FIELD_MAPPING.values())
+        lines = []
+        for field_id, display_name in sorted(self.field_names.items(), key=lambda kv: kv[1]):
+            if not field_id.startswith('customfield_'):
+                continue
+            if field_id in excluded:
+                continue
+            value = getattr(issue.fields, field_id, None)
+            if value is None:
+                continue
+            formatted = self._format_additional_value(value, att_handler)
+            if not formatted:
+                continue
+            lines.append(f"### {display_name}")
+            lines.append("")
+            lines.append(formatted)
+            lines.append("")
+        if not lines:
+            return None
+        return "## Details\n\n" + "\n".join(lines).rstrip()
+
     def export_all(self, nodes: dict[str, IssueNode]) -> tuple[int, list[tuple[str, str]]]:
         """Export all nodes. Returns (success_count, [(key, error), ...])."""
         # First pass: register all user names for consistent PII mapping

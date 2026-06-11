@@ -73,3 +73,51 @@ def test_format_option_list_joins_values():
     exp = make_exporter()
     out = exp._format_additional_value([FakeOption("A"), FakeOption("B")])
     assert out == "A, B"
+
+
+class FakeFields:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+class FakeIssue:
+    def __init__(self, **fields):
+        self.fields = FakeFields(**fields)
+
+
+def test_generate_additional_fields_renders_populated_unmapped():
+    field_names = {
+        "customfield_22091": "User pain point",
+        "customfield_20795": "Product Area",
+        "customfield_99999": "Empty Field",
+        "description": "Description",   # mapped — must be excluded
+    }
+    exp = make_exporter(field_names)
+    issue = FakeIssue(
+        customfield_22091="Users cannot select a CAG in the UI.",
+        customfield_20795=FakeOption("Synthetic"),
+        customfield_99999=None,
+    )
+    out = exp._generate_additional_fields(issue)
+    assert out.startswith("## Details")
+    assert "### Product Area" in out
+    assert "Synthetic" in out
+    assert "### User pain point" in out
+    assert "Users cannot select a CAG in the UI." in out
+    assert "Empty Field" not in out
+
+
+def test_generate_additional_fields_excludes_mapped_fields():
+    field_names = {
+        "customfield_17800": "Team",
+        "description": "Description",
+    }
+    exp = make_exporter(field_names)
+    issue = FakeIssue(customfield_17800=FakeOption("Synthetic Team"))
+    assert exp._generate_additional_fields(issue) is None
+
+
+def test_generate_additional_fields_returns_none_when_nothing():
+    exp = make_exporter({"customfield_22091": "User pain point"})
+    issue = FakeIssue(customfield_22091=None)
+    assert exp._generate_additional_fields(issue) is None
