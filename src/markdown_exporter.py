@@ -35,6 +35,28 @@ class MarkdownExporter:
         """True when description is None, empty, or whitespace-only."""
         return not description or not str(description).strip()
 
+    def _format_additional_value(self, value: Any, att_handler: Any = None) -> str | None:
+        """Format one custom-field value for the Details section. Returns None if empty."""
+        if isinstance(value, str):
+            if not value.strip():
+                return None
+            converted = self.converter.convert(value)
+            if att_handler is not None:
+                converted = att_handler.replace_attachment_references(converted)
+            return self.scrubber.scrub_text(converted).strip() or None
+        if isinstance(value, list):
+            parts = []
+            for item in value:
+                if hasattr(item, 'displayName'):
+                    parts.append(self.scrubber.anonymize_name(item.displayName))
+                else:
+                    parts.append(self.formatter.format_custom_field(item))
+            parts = [p for p in parts if p]
+            return ', '.join(parts) if parts else None
+        if hasattr(value, 'displayName'):
+            return self.scrubber.anonymize_name(value.displayName)
+        return self.formatter.format_custom_field(value)
+
     def export_all(self, nodes: dict[str, IssueNode]) -> tuple[int, list[tuple[str, str]]]:
         """Export all nodes. Returns (success_count, [(key, error), ...])."""
         # First pass: register all user names for consistent PII mapping
