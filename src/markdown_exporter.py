@@ -21,13 +21,19 @@ from graph_walker import IssueNode
 class MarkdownExporter:
     """Exports workitems to markdown with PII scrubbing and Obsidian wikilinks."""
 
-    def __init__(self, jira_client: Any, data_dir: Path, scrubber: PiiScrubber, root_key: str = ""):
+    def __init__(self, jira_client: Any, data_dir: Path, scrubber: PiiScrubber, root_key: str = "", field_names: dict | None = None):
         self.jira = jira_client
         self.data_dir = data_dir
         self.scrubber = scrubber
         self.root_key = root_key
+        self.field_names = field_names or {}
         self.converter = JiraMarkupConverter(JIRA_BASE_URL)
         self.formatter = FieldFormatter()
+
+    @staticmethod
+    def _is_empty_description(description: Any) -> bool:
+        """True when description is None, empty, or whitespace-only."""
+        return not description or not str(description).strip()
 
     def export_all(self, nodes: dict[str, IssueNode]) -> tuple[int, list[tuple[str, str]]]:
         """Export all nodes. Returns (success_count, [(key, error), ...])."""
