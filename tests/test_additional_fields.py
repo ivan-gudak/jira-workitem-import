@@ -128,3 +128,71 @@ def test_format_empty_brace_string_returns_none():
     assert exp._format_additional_value("{}") is None
     assert exp._format_additional_value("  {}  ") is None
     assert exp._format_additional_value("[]") is None
+
+
+class FakeNamed:
+    def __init__(self, name):
+        self.name = name
+
+
+def test_format_fallback_scrubs_pii():
+    exp = make_exporter()
+    out = exp._format_additional_value(FakeNamed("contact john@dynatrace.com"))
+    assert "[email]" in out
+    assert "john@dynatrace.com" not in out
+
+
+def test_generate_markdown_uses_details_when_description_empty(monkeypatch):
+    import markdown_exporter as me
+    monkeypatch.setattr(me, "fetch_pull_requests", lambda jira, issue_id: [])
+
+    exp = make_exporter({"customfield_22091": "User pain point"})
+
+    class FakeAtt:
+        def replace_attachment_references(self, text):
+            return text
+        def get_attachment_list_markdown(self, images, others):
+            return ""
+
+    issue = FakeIssue(summary="S", description="", customfield_22091="Real pain content")
+    issue.key = "PRODFB-929"
+    issue.id = "1"
+
+    class Node:
+        pass
+    node = Node()
+    node.role = "linked"
+
+    md = exp._generate_markdown(issue, node, FakeAtt(), [], [], {})
+    assert "## Details" in md
+    assert "### User pain point" in md
+    assert "Real pain content" in md
+    assert "## Description" not in md
+
+
+def test_generate_markdown_uses_description_when_present(monkeypatch):
+    import markdown_exporter as me
+    monkeypatch.setattr(me, "fetch_pull_requests", lambda jira, issue_id: [])
+
+    exp = make_exporter({"customfield_22091": "User pain point"})
+
+    class FakeAtt:
+        def replace_attachment_references(self, text):
+            return text
+        def get_attachment_list_markdown(self, images, others):
+            return ""
+
+    issue = FakeIssue(summary="S", description="A real description.", customfield_22091="Should not appear")
+    issue.key = "PRODFB-916"
+    issue.id = "2"
+
+    class Node:
+        pass
+    node = Node()
+    node.role = "root"
+
+    md = exp._generate_markdown(issue, node, FakeAtt(), [], [], {})
+    assert "## Description" in md
+    assert "A real description." in md
+    assert "## Details" not in md
+    assert "Should not appear" not in md

@@ -51,12 +51,12 @@ class MarkdownExporter:
                 if hasattr(item, 'displayName'):
                     parts.append(self.scrubber.anonymize_name(item.displayName))
                 else:
-                    parts.append(self.formatter.format_custom_field(item))
+                    parts.append(self.scrubber.scrub_text(self.formatter.format_custom_field(item)))
             parts = [p for p in parts if p]
             return ', '.join(parts) if parts else None
         if hasattr(value, 'displayName'):
             return self.scrubber.anonymize_name(value.displayName)
-        return self.formatter.format_custom_field(value)
+        return self.scrubber.scrub_text(self.formatter.format_custom_field(value))
 
     def _generate_additional_fields(self, issue: Any, att_handler: Any = None) -> str | None:
         """Render populated custom fields not already shown elsewhere, as a Details section.
