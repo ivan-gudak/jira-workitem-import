@@ -6,8 +6,6 @@ Traverses Jira issue links and Epic hierarchies to collect the full workitem gra
 from dataclasses import dataclass, field
 from typing import Any
 
-from config import ALL_FIELD_IDS
-
 
 @dataclass
 class IssueNode:
@@ -64,7 +62,7 @@ class GraphWalker:
 
     def _fetch_issue(self, key: str) -> Any | None:
         try:
-            issue = self.jira.issue(key, fields=ALL_FIELD_IDS)
+            issue = self.jira.issue(key, fields="*all")
             print(f"  Fetched: {issue.key} - {issue.fields.summary}")
             return issue
         except Exception as e:
@@ -141,7 +139,7 @@ class GraphWalker:
         results = []
         start = 0
         while True:
-            batch = self.jira.search_issues(jql, fields=ALL_FIELD_IDS, startAt=start, maxResults=50)
+            batch = self.jira.search_issues(jql, fields="*all", startAt=start, maxResults=50)
             if not batch:
                 break
             results.extend(batch)
