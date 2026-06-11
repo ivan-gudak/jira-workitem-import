@@ -44,6 +44,8 @@ def main():
         auth = JiraAuth()
         jira_client = auth.get_jira_client()
         print(f"Connected to: {auth.server}\n")
+        # Map customfield ids to display names (one call) for the Details fallback
+        field_names = {f["id"]: f["name"] for f in jira_client.fields()}
     except (FileNotFoundError, ValueError) as e:
         print(f"Auth error: {e}")
         sys.exit(1)
@@ -74,7 +76,7 @@ def main():
     print("=" * 50)
 
     scrubber = PiiScrubber()
-    exporter = MarkdownExporter(jira_client, import_dir, scrubber, root_key=args.jira_id)
+    exporter = MarkdownExporter(jira_client, import_dir, scrubber, root_key=args.jira_id, field_names=field_names)
     success, failed = exporter.export_all(nodes)
 
     # Generate per-import index

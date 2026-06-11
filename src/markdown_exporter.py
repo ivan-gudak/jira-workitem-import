@@ -21,13 +21,68 @@ from graph_walker import IssueNode
 class MarkdownExporter:
     """Exports workitems to markdown with PII scrubbing and Obsidian wikilinks."""
 
-    def __init__(self, jira_client: Any, data_dir: Path, scrubber: PiiScrubber, root_key: str = ""):
+    def __init__(self, jira_client: Any, data_dir: Path, scrubber: PiiScrubber, root_key: str = "", field_names: dict | None = None):
         self.jira = jira_client
         self.data_dir = data_dir
         self.scrubber = scrubber
         self.root_key = root_key
+        self.field_names = field_names or {}
         self.converter = JiraMarkupConverter(JIRA_BASE_URL)
         self.formatter = FieldFormatter()
+
+    @staticmethod
+    def _is_empty_description(description: Any) -> bool:
+        """True when description is None, empty, or whitespace-only."""
+        return not description or not str(description).strip()
+
+    def _format_additional_value(self, value: Any, att_handler: Any = None) -> str | None:
+        """Format one custom-field value for the Details section. Returns None if empty."""
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped or stripped in ("{}", "[]"):
+                return None
+            converted = self.converter.convert(value)
+            if att_handler is not None:
+                converted = att_handler.replace_attachment_references(converted)
+            return self.scrubber.scrub_text(converted).strip() or None
+        if isinstance(value, list):
+            parts = []
+            for item in value:
+                if hasattr(item, 'displayName'):
+                    parts.append(self.scrubber.anonymize_name(item.displayName))
+                else:
+                    parts.append(self.scrubber.scrub_text(self.formatter.format_custom_field(item)))
+            parts = [p for p in parts if p]
+            return ', '.join(parts) if parts else None
+        if hasattr(value, 'displayName'):
+            return self.scrubber.anonymize_name(value.displayName)
+        return self.scrubber.scrub_text(self.formatter.format_custom_field(value))
+
+    def _generate_additional_fields(self, issue: Any, att_handler: Any = None) -> str | None:
+        """Render populated custom fields not already shown elsewhere, as a Details section.
+
+        Used as a fallback when the standard description is empty/missing.
+        """
+        excluded = set(FIELD_MAPPING.values())
+        lines = []
+        for field_id, display_name in sorted(self.field_names.items(), key=lambda kv: kv[1]):
+            if not field_id.startswith('customfield_'):
+                continue
+            if field_id in excluded:
+                continue
+            value = getattr(issue.fields, field_id, None)
+            if value is None:
+                continue
+            formatted = self._format_additional_value(value, att_handler)
+            if not formatted:
+                continue
+            lines.append(f"### {display_name}")
+            lines.append("")
+            lines.append(formatted)
+            lines.append("")
+        if not lines:
+            return None
+        return "## Details\n\n" + "\n".join(lines).rstrip()
 
     def export_all(self, nodes: dict[str, IssueNode]) -> tuple[int, list[tuple[str, str]]]:
         """Export all nodes. Returns (success_count, [(key, error), ...])."""
@@ -58,6 +113,18 @@ class MarkdownExporter:
             for c in comments.comments:
                 if hasattr(c, 'author') and hasattr(c.author, 'displayName'):
                     self.scrubber.anonymize_name(c.author.displayName)
+
+        # Register people referenced in any custom field, for consistent User-N numbering
+        for field_id in self.field_names:
+            if not field_id.startswith('customfield_'):
+                continue
+            val = getattr(issue.fields, field_id, None)
+            if val is None:
+                continue
+            items = val if isinstance(val, list) else [val]
+            for item in items:
+                if hasattr(item, 'displayName'):
+                    self.scrubber.anonymize_name(item.displayName)
 
     def _export_one(self, node: IssueNode, all_nodes: dict[str, IssueNode]) -> None:
         """Export a single workitem."""
@@ -151,15 +218,20 @@ class MarkdownExporter:
             lines.append(self.scrubber.scrub_text(self.converter.convert(status_details)))
             lines.append("")
 
-        # Description
+        # Description — or a Details fallback built from custom fields when empty
         description = getattr(issue.fields, 'description', None)
-        if description:
+        if not self._is_empty_description(description):
             lines.append("## Description")
             lines.append("")
             converted = self.converter.convert(description)
             converted = att_handler.replace_attachment_references(converted)
             lines.append(self.scrubber.scrub_text(converted))
             lines.append("")
+        else:
+            details = self._generate_additional_fields(issue, att_handler)
+            if details:
+                lines.append(details)
+                lines.append("")
 
         # Attachments
         if images or others:
