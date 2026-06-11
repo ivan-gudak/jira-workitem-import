@@ -38,7 +38,8 @@ class MarkdownExporter:
     def _format_additional_value(self, value: Any, att_handler: Any = None) -> str | None:
         """Format one custom-field value for the Details section. Returns None if empty."""
         if isinstance(value, str):
-            if not value.strip():
+            stripped = value.strip()
+            if not stripped or stripped in ("{}", "[]"):
                 return None
             converted = self.converter.convert(value)
             if att_handler is not None:

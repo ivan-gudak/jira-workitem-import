@@ -121,3 +121,10 @@ def test_generate_additional_fields_returns_none_when_nothing():
     exp = make_exporter({"customfield_22091": "User pain point"})
     issue = FakeIssue(customfield_22091=None)
     assert exp._generate_additional_fields(issue) is None
+
+
+def test_format_empty_brace_string_returns_none():
+    exp = make_exporter()
+    assert exp._format_additional_value("{}") is None
+    assert exp._format_additional_value("  {}  ") is None
+    assert exp._format_additional_value("[]") is None
