@@ -69,6 +69,3 @@ EXPORT_FIELDS = [
     "Release Notes Title",
     "Release Notes Summary",
 ]
-
-# All Jira field IDs to fetch in a single API call
-ALL_FIELD_IDS = ",".join(set(FIELD_MAPPING.values())) + ",attachment,comment"
