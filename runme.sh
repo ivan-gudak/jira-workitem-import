@@ -7,6 +7,12 @@ if [ -z "$1" ]; then
 fi
 
 JIRA_ID="$1"
+
+# Expand the "P-" shorthand to the full "PRODUCT-" project key.
+if [[ "$JIRA_ID" == P-* ]]; then
+  JIRA_ID="PRODUCT-${JIRA_ID#P-}"
+fi
+
 EXPORT_DIR="$VAULT_PATH/jira-products"
 
 python -m venv .venv

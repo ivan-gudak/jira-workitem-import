@@ -3,6 +3,7 @@
 
 # Exported data
 .data/
+.idea/
 
 # Python
 __pycache__/
