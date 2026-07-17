@@ -196,3 +196,68 @@ def test_generate_markdown_uses_description_when_present(monkeypatch):
     assert "A real description." in md
     assert "## Details" not in md
     assert "Should not appear" not in md
+
+
+def test_release_notes_section_includes_new_fields(monkeypatch):
+    import markdown_exporter as me
+    monkeypatch.setattr(me, "fetch_pull_requests", lambda jira, issue_id: [])
+
+    exp = make_exporter()
+
+    class FakeAtt:
+        def replace_attachment_references(self, text):
+            return text
+        def get_attachment_list_markdown(self, images, others):
+            return ""
+
+    issue = FakeIssue(
+        summary="S",
+        description="d",
+        customfield_15900=[FakeOption("Yes")],
+        customfield_22157=FakeOption("New technology support"),
+        customfield_20300="Managed (344), SaaS (344)",
+        customfield_19502=FakeOption("Application Observability"),
+        customfield_19701="Some Release Notes Title",
+        customfield_15000="Some release notes summary text.",
+    )
+    issue.key = "PRODUCT-1"
+    issue.id = "1"
+
+    class Node:
+        pass
+    node = Node()
+    node.role = "root"
+
+    md = exp._generate_markdown(issue, node, FakeAtt(), [], [], {})
+    assert "## Release Notes" in md
+    assert "**Relevant for release notes:** Yes" in md
+    assert "**Change type:** New technology support" in md
+    assert "**Release versions:** Managed (344), SaaS (344)" in md
+    assert "**Category:** Application Observability" in md
+    assert "**Title:** Some Release Notes Title" in md
+    assert "Some release notes summary text." in md
+
+
+def test_release_notes_section_absent_when_all_empty(monkeypatch):
+    import markdown_exporter as me
+    monkeypatch.setattr(me, "fetch_pull_requests", lambda jira, issue_id: [])
+
+    exp = make_exporter()
+
+    class FakeAtt:
+        def replace_attachment_references(self, text):
+            return text
+        def get_attachment_list_markdown(self, images, others):
+            return ""
+
+    issue = FakeIssue(summary="S", description="d")
+    issue.key = "PRODUCT-2"
+    issue.id = "2"
+
+    class Node:
+        pass
+    node = Node()
+    node.role = "root"
+
+    md = exp._generate_markdown(issue, node, FakeAtt(), [], [], {})
+    assert "## Release Notes" not in md

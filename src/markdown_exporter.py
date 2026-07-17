@@ -238,10 +238,23 @@ class MarkdownExporter:
             lines.append(att_handler.get_attachment_list_markdown(images, others))
 
         # Release notes
+        relevant_for_rn = getattr(issue.fields, 'customfield_15900', None)
+        change_type = getattr(issue.fields, 'customfield_22157', None)
+        release_versions = getattr(issue.fields, 'customfield_20300', None)
+        release_category = getattr(issue.fields, 'customfield_19502', None)
         release_title = getattr(issue.fields, 'customfield_19701', None)
         release_summary = getattr(issue.fields, 'customfield_15000', None)
-        if release_title or release_summary:
+        if any((relevant_for_rn, change_type, release_versions, release_category, release_title, release_summary)):
             lines.append("## Release Notes")
+            lines.append("")
+            if relevant_for_rn:
+                lines.append(f"**Relevant for release notes:** {self.formatter.format_custom_field(relevant_for_rn)}")
+            if change_type:
+                lines.append(f"**Change type:** {self.formatter.format_custom_field(change_type)}")
+            if release_versions:
+                lines.append(f"**Release versions:** {self.formatter.format_custom_field(release_versions)}")
+            if release_category:
+                lines.append(f"**Category:** {self.formatter.format_custom_field(release_category)}")
             lines.append("")
             if release_title:
                 lines.append(f"**Title:** {release_title}")
