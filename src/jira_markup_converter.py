@@ -359,8 +359,11 @@ class JiraMarkupConverter:
         
         text = re.sub(r'\[\[[^\]]+\]\]', protect_wikilink, text)
         
-        # Now convert remaining issue keys
-        text = re.sub(r'\b([A-Z]{2,10}-\d+)\b', replace_issue_key, text)
+        # Now convert remaining issue keys, but not ones already sitting inside
+        # a literal [bracket] pair (e.g. a VI's [US-1] ID marker) — otherwise
+        # the untouched outer brackets plus this replacement's own [[key]]
+        # nest into a corrupted [[[key]]].
+        text = re.sub(r'(?<!\[)\b([A-Z]{2,10}-\d+)\b(?!\])', replace_issue_key, text)
         
         # Restore protected links
         for placeholder, original in link_placeholders.items():
