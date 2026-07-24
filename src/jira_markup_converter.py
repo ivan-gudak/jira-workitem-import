@@ -358,7 +358,21 @@ class JiraMarkupConverter:
             return placeholder
         
         text = re.sub(r'\[\[[^\]]+\]\]', protect_wikilink, text)
-        
+
+        # Protect bare http(s) URLs so an issue key embedded in a URL path
+        # (e.g. https://…/browse/MGD-8605) is not rewritten into a broken link.
+        # Runs after markdown-link protection, so URLs already inside [text](url)
+        # are shielded by that placeholder and won't be matched again here. The
+        # pattern stops at whitespace and bracket/paren boundaries.
+        def protect_bare_url(match):
+            nonlocal placeholder_id
+            placeholder = f"<<<LINK{placeholder_id}>>>"
+            link_placeholders[placeholder] = match.group(0)
+            placeholder_id += 1
+            return placeholder
+
+        text = re.sub(r'https?://[^\s<>()\[\]]+', protect_bare_url, text)
+
         # Now convert remaining issue keys, but not ones already sitting inside
         # a literal [bracket] pair (e.g. a VI's [US-1] ID marker) — otherwise
         # the untouched outer brackets plus this replacement's own [[key]]
