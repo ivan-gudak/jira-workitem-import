@@ -16,6 +16,8 @@ from markdown_exporter import MarkdownExporter
 from index_generator import generate_import_index, update_top_level_index
 from pii_scrubber import PiiScrubber
 from export_paths import ExportPathError, resolve_export_target
+from link_renderer import OutputProfile
+from config import JIRA_BASE_URL
 
 
 def main():
@@ -31,6 +33,12 @@ def main():
         default=None,
         help="Output directory. Overrides SPECS_PATH and VAULT_PATH.",
     )
+    parser.add_argument(
+        "--link-style",
+        choices=("obsidian", "github"),
+        default=None,
+        help="Link rendering. Defaults to github for SPECS_PATH, obsidian otherwise.",
+    )
     args = parser.parse_args()
 
     try:
@@ -42,9 +50,12 @@ def main():
     data_dir = target.data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
 
+    style = args.link_style or ("github" if target.origin == "specs" else "obsidian")
+    profile = OutputProfile.for_style(style, JIRA_BASE_URL)
+
     print("=" * 50)
     print(f"Destination: {data_dir}")
-    print(f"Source:      {target.origin}    Layout: {target.layout}")
+    print(f"Source:      {target.origin}    Layout: {target.layout}    Links: {style}")
     print("=" * 50)
 
     # Authenticate
@@ -84,18 +95,21 @@ def main():
     print("=" * 50)
 
     scrubber = PiiScrubber()
-    exporter = MarkdownExporter(jira_client, import_dir, scrubber, root_key=args.jira_id, field_names=field_names)
+    exporter = MarkdownExporter(jira_client, import_dir, scrubber, root_key=args.jira_id,
+                                field_names=field_names, profile=profile)
     success, failed = exporter.export_all(nodes)
 
     # Generate per-import index
-    index_content = generate_import_index(import_dir, nodes, args.jira_id)
+    profile.renderer.keys = set(nodes.keys())
+    index_content = generate_import_index(import_dir, nodes, args.jira_id,
+                                          links=profile.renderer, layout=target.layout)
     index_path = import_dir / f"{args.jira_id}-index.md"
     index_path.write_text(index_content, encoding="utf-8")
     print(f"\nImport index: {index_path}")
 
     # The registry lists sibling imports; a flat destination holds exactly one.
     if target.layout == "nested":
-        update_top_level_index(data_dir)
+        update_top_level_index(data_dir, links=profile.renderer)
         print(f"Top-level index: {data_dir / 'export-index.md'}")
 
     # Summary
