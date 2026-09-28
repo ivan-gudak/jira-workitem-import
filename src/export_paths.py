@@ -28,8 +28,9 @@ def _pointer(env: Mapping[str, str], name: str) -> Optional[Path]:
     raw = (env.get(name) or "").strip()
     if not raw:
         return None
-    # rstrip the separator so a trailing slash does not double up later
-    return Path(raw.rstrip("/")).expanduser()
+    # rstrip the separator so a trailing slash does not double up later,
+    # but keep a bare "/" — stripping it leaves "", and Path("") is the CWD.
+    return Path(raw.rstrip("/") or "/").expanduser()
 
 
 def resolve_export_target(

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from export_paths import ExportPathError, resolve_export_target
@@ -127,12 +129,12 @@ def test_vault_missing_dir_raises(tmp_path):
 
 # --- Rule 4: nothing set -----------------------------------------------------
 
-def test_no_destination_raises(tmp_path):
+def test_no_destination_raises():
     with pytest.raises(ExportPathError, match="no export destination"):
         resolve_export_target("PRODUCT-1", None, {})
 
 
-def test_empty_string_env_counts_as_unset(tmp_path):
+def test_empty_string_env_counts_as_unset():
     """The reported bug: VAULT_PATH='' must not yield /jira-products."""
     with pytest.raises(ExportPathError, match="no export destination"):
         resolve_export_target("PRODUCT-1", None, {"VAULT_PATH": "", "SPECS_PATH": "   "})
@@ -166,3 +168,11 @@ def test_tilde_in_vault_path_expands(tmp_path, monkeypatch):
     (tmp_path / "myvault").mkdir()
     target = resolve_export_target("PRODUCT-1", None, {"VAULT_PATH": "~/myvault"})
     assert target.data_dir == tmp_path / "myvault" / "jira-products"
+
+
+def test_root_pointer_is_not_collapsed_to_the_working_directory():
+    """VAULT_PATH='/' rstrips to '', and Path('') is the CWD — which would
+    silently write the export next to wherever the tool happened to run."""
+    target = resolve_export_target("PRODUCT-1", None, {"VAULT_PATH": "/"})
+    assert target.data_dir.is_absolute()
+    assert target.data_dir == Path("/jira-products")

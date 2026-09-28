@@ -155,7 +155,7 @@ class MarkdownExporter:
         )
 
         # Download attachments
-        print(f"  Downloading attachments...")
+        print("  Downloading attachments...")
         images, others = att_handler.download_attachments(issue)
 
         # Generate main markdown
@@ -303,7 +303,7 @@ class MarkdownExporter:
                     lines.append("")
 
         # Pull requests
-        print(f"  Fetching pull requests...")
+        print("  Fetching pull requests...")
         prs = fetch_pull_requests(self.jira, issue.id)
         if prs:
             for pr in prs:

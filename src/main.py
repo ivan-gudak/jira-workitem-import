@@ -47,8 +47,8 @@ def main():
         print(f"Error: {e}")
         sys.exit(1)
 
+    # Created after the graph walk succeeds, so a mistyped ID leaves nothing behind.
     data_dir = target.data_dir
-    data_dir.mkdir(parents=True, exist_ok=True)
 
     style = args.link_style or ("github" if target.origin == "specs" else "obsidian")
     profile = OutputProfile.for_style(style, JIRA_BASE_URL)

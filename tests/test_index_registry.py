@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from index_generator import generate_import_index, update_top_level_index
-from link_renderer import GithubLinks, Location, ObsidianLinks
+from link_renderer import GithubLinks, ObsidianLinks
 
 BASE = "https://example.atlassian.net"
 
