@@ -1,7 +1,7 @@
 """
 Markdown exporter module.
 Exports each workitem as <KEY>.md + comments.md + attachments/, with PII scrubbing.
-All links use Obsidian wikilinks. Each file links back to the index.
+Links are rendered through an OutputProfile. Each file links back to the index.
 """
 
 import shutil
@@ -10,6 +10,8 @@ from typing import Any
 
 from config import FIELD_MAPPING, EXPORT_FIELDS, JIRA_BASE_URL
 from jira_markup_converter import JiraMarkupConverter
+from rendering_converter import RenderingConverter
+from link_renderer import Location, OutputProfile
 from field_formatter import FieldFormatter
 from attachment_handler import AttachmentHandler
 from comments_handler import CommentsHandler
@@ -19,29 +21,35 @@ from graph_walker import IssueNode
 
 
 class MarkdownExporter:
-    """Exports workitems to markdown with PII scrubbing and Obsidian wikilinks."""
+    """Exports workitems to markdown with PII scrubbing and profile-driven links."""
 
-    def __init__(self, jira_client: Any, data_dir: Path, scrubber: PiiScrubber, root_key: str = "", field_names: dict | None = None):
+    def __init__(self, jira_client: Any, data_dir: Path, scrubber: PiiScrubber, root_key: str = "",
+                 field_names: dict | None = None, profile: OutputProfile | None = None):
         self.jira = jira_client
         self.data_dir = data_dir
         self.scrubber = scrubber
         self.root_key = root_key
         self.field_names = field_names or {}
+        self.profile = profile or OutputProfile.for_style("obsidian", JIRA_BASE_URL)
         self.converter = JiraMarkupConverter(JIRA_BASE_URL)
         self.formatter = FieldFormatter()
+
+    def _converter_for(self, at):
+        """A converter bound to the file being written."""
+        return self.converter if at is None else RenderingConverter(JIRA_BASE_URL, at)
 
     @staticmethod
     def _is_empty_description(description: Any) -> bool:
         """True when description is None, empty, or whitespace-only."""
         return not description or not str(description).strip()
 
-    def _format_additional_value(self, value: Any, att_handler: Any = None) -> str | None:
+    def _format_additional_value(self, value: Any, att_handler: Any = None, at=None) -> str | None:
         """Format one custom-field value for the Details section. Returns None if empty."""
         if isinstance(value, str):
             stripped = value.strip()
             if not stripped or stripped in ("{}", "[]"):
                 return None
-            converted = self.converter.convert(value)
+            converted = self._converter_for(at).convert(value)
             if att_handler is not None:
                 converted = att_handler.replace_attachment_references(converted)
             return self.scrubber.scrub_text(converted).strip() or None
@@ -58,7 +66,7 @@ class MarkdownExporter:
             return self.scrubber.anonymize_name(value.displayName)
         return self.scrubber.scrub_text(self.formatter.format_custom_field(value))
 
-    def _generate_additional_fields(self, issue: Any, att_handler: Any = None) -> str | None:
+    def _generate_additional_fields(self, issue: Any, att_handler: Any = None, at=None) -> str | None:
         """Render populated custom fields not already shown elsewhere, as a Details section.
 
         Used as a fallback when the standard description is empty/missing.
@@ -73,7 +81,7 @@ class MarkdownExporter:
             value = getattr(issue.fields, field_id, None)
             if value is None:
                 continue
-            formatted = self._format_additional_value(value, att_handler)
+            formatted = self._format_additional_value(value, att_handler, at)
             if not formatted:
                 continue
             lines.append(f"### {display_name}")
@@ -89,6 +97,8 @@ class MarkdownExporter:
         # First pass: register all user names for consistent PII mapping
         for node in nodes.values():
             self._register_users(node.issue)
+
+        self.profile.renderer.keys = set(nodes.keys())
 
         success, failed = 0, []
         for key, node in nodes.items():
@@ -138,10 +148,14 @@ class MarkdownExporter:
         item_dir.mkdir(parents=True)
 
         attachments_dir = item_dir / "attachments"
-        att_handler = AttachmentHandler(self.jira, str(attachments_dir))
+        att_handler = AttachmentHandler(
+            self.jira, str(attachments_dir),
+            download_allowlist=self.profile.download_allowlist,
+            links=self.profile.renderer.at(Location.ticket(key)),
+        )
 
         # Download attachments
-        print(f"  Downloading attachments...")
+        print("  Downloading attachments...")
         images, others = att_handler.download_attachments(issue)
 
         # Generate main markdown
@@ -149,17 +163,23 @@ class MarkdownExporter:
         (item_dir / f"{key}.md").write_text(md, encoding="utf-8")
         print(f"  Written: {key}.md")
 
-        # Generate comments
-        comments_handler = CommentsHandler(JIRA_BASE_URL, att_handler)
-        comments_md = comments_handler.fetch_and_format_comments(issue)
-        comments_md = self.scrubber.scrub_text(comments_md)
-        (item_dir / f"{key}-comments.md").write_text(comments_md, encoding="utf-8")
-        print(f"  Written: {key}-comments.md")
+        # Under GitHub style the comments live inside <KEY>.md.
+        if not self.profile.inline_comments:
+            comments_handler = CommentsHandler(
+                JIRA_BASE_URL, att_handler,
+                links=self.profile.renderer.at(Location.ticket(key)),
+            )
+            comments_md = comments_handler.format_comments_document(issue)
+            comments_md = self.scrubber.scrub_text(comments_md)
+            (item_dir / f"{key}-comments.md").write_text(comments_md, encoding="utf-8")
+            print(f"  Written: {key}-comments.md")
 
     def _generate_markdown(self, issue: Any, node: IssueNode,
                            att_handler: AttachmentHandler,
                            images: list, others: list,
                            all_nodes: dict[str, IssueNode]) -> str:
+        at = self.profile.renderer.at(Location.ticket(issue.key))
+        conv = self._converter_for(at)
         lines = []
 
         # Frontmatter
@@ -172,7 +192,7 @@ class MarkdownExporter:
 
         # Navigation: index backlink
         index_name = f"{self.root_key}-index" if self.root_key else "export-index"
-        lines.append(f"**Index:** [[{index_name}]]")
+        lines.append(f"**Index:** {at.index(index_name)}")
         lines.append("")
 
         # Metadata
@@ -202,12 +222,12 @@ class MarkdownExporter:
         lines.append(f"**Role in export:** {node.role}")
         lines.append("")
 
-        # Parent (wikilink if in export, Jira URL otherwise)
+        # Parent (in-export link if in export, Jira URL otherwise)
         parent = getattr(issue.fields, 'parent', None)
         if parent:
             parent_key = getattr(parent, 'key', None)
             if parent_key:
-                lines.append(f"**Parent:** {self._wikilink(parent_key, all_nodes)}")
+                lines.append(f"**Parent:** {at.issue(parent_key)}")
                 lines.append("")
 
         # Status details
@@ -215,7 +235,7 @@ class MarkdownExporter:
         if status_details:
             lines.append("## Status Details")
             lines.append("")
-            lines.append(self.scrubber.scrub_text(self.converter.convert(status_details)))
+            lines.append(self.scrubber.scrub_text(conv.convert(status_details)))
             lines.append("")
 
         # Description — or a Details fallback built from custom fields when empty
@@ -223,19 +243,22 @@ class MarkdownExporter:
         if not self._is_empty_description(description):
             lines.append("## Description")
             lines.append("")
-            converted = self.converter.convert(description)
+            converted = conv.convert(description)
             converted = att_handler.replace_attachment_references(converted)
             lines.append(self.scrubber.scrub_text(converted))
             lines.append("")
         else:
-            details = self._generate_additional_fields(issue, att_handler)
+            details = self._generate_additional_fields(issue, att_handler, at)
             if details:
                 lines.append(details)
                 lines.append("")
 
-        # Attachments
-        if images or others:
-            lines.append(att_handler.get_attachment_list_markdown(images, others))
+        # Attachments. The handler decides whether there is anything to show:
+        # a ticket whose attachments were all skipped has empty images/others
+        # but still lists them as sized Jira links.
+        attachments_md = att_handler.get_attachment_list_markdown(images, others)
+        if attachments_md:
+            lines.append(attachments_md)
 
         # Release notes
         relevant_for_rn = getattr(issue.fields, 'customfield_15900', None)
@@ -262,25 +285,25 @@ class MarkdownExporter:
             if release_summary:
                 lines.append("**Summary:**")
                 lines.append("")
-                lines.append(self.scrubber.scrub_text(self.converter.convert(release_summary)))
+                lines.append(self.scrubber.scrub_text(conv.convert(release_summary)))
                 lines.append("")
 
-        # Linked issues (wikilinks for issues in export, Jira URLs for external)
+        # Linked issues (in-export links for issues in export, Jira URLs for external)
         issue_links = getattr(issue.fields, 'issuelinks', None)
         if issue_links:
-            grouped = self._group_links_as_wikilinks(issue_links, all_nodes)
+            grouped = self._group_links(issue_links, at)
             if grouped:
                 lines.append("## Linked Issues")
                 lines.append("")
-                for link_type, wikilinks in sorted(grouped.items()):
+                for link_type, rendered in sorted(grouped.items()):
                     lines.append(f"### {link_type}")
                     lines.append("")
-                    for wl in wikilinks:
-                        lines.append(f"- {wl}")
+                    for link in rendered:
+                        lines.append(f"- {link}")
                     lines.append("")
 
         # Pull requests
-        print(f"  Fetching pull requests...")
+        print("  Fetching pull requests...")
         prs = fetch_pull_requests(self.jira, issue.id)
         if prs:
             for pr in prs:
@@ -288,23 +311,22 @@ class MarkdownExporter:
                     pr.author = self.scrubber.anonymize_name(pr.author) or pr.author
             lines.append(format_prs_markdown(prs))
 
-        # Comments (embedded via Obsidian transclusion)
+        # Comments: inlined for GitHub (no transclusion there), transcluded for Obsidian.
         lines.append("## Comments")
         lines.append("")
-        lines.append(f"![[{issue.key}-comments]]")
+        if self.profile.inline_comments:
+            handler = CommentsHandler(JIRA_BASE_URL, att_handler, links=at)
+            body = handler.format_comments_body(issue, level=3)
+            lines.append(self.scrubber.scrub_text(body))
+        else:
+            lines.append(f"![[{issue.key}-comments]]")
         lines.append("")
 
         return '\n'.join(lines)
 
     @staticmethod
-    def _wikilink(key: str, all_nodes: dict[str, IssueNode]) -> str:
-        """Return [[KEY]] wikilink if key is in export, else Jira URL."""
-        if key in all_nodes:
-            return f"[[{key}]]"
-        return f"[{key}]({JIRA_BASE_URL}/browse/{key})"
-
-    def _group_links_as_wikilinks(self, links, all_nodes: dict[str, IssueNode]) -> dict[str, list[str]] | None:
-        """Group linked issues by type, using wikilinks for exported issues."""
+    def _group_links(links, at) -> dict[str, list[str]] | None:
+        """Group linked issues by type, rendered through the bound renderer."""
         if not links:
             return None
         grouped = {}
@@ -319,7 +341,7 @@ class MarkdownExporter:
                 continue
             key = getattr(issue, 'key', None)
             if key:
-                grouped.setdefault(link_type, []).append(self._wikilink(key, all_nodes))
+                grouped.setdefault(link_type, []).append(at.issue(key))
         return grouped if grouped else None
 
     def _generate_frontmatter(self, issue: Any) -> str:

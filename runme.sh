@@ -14,8 +14,6 @@ if [[ "$JIRA_ID" == P-* ]]; then
   JIRA_ID="PRODUCT-${JIRA_ID#P-}"
 fi
 
-EXPORT_DIR="$VAULT_PATH/jira-products"
-
 # A venv is machine-specific, and this one lives inside the Obsidian vault, so a
 # venv built on another machine can arrive here by vault sync. Re-running
 # `python -m venv .venv` over it exits 0 and repairs NOTHING -- the stale
@@ -28,4 +26,4 @@ fi
 source .venv/bin/activate
 pip install -r requirements.txt -q
 
-python src/main.py "$JIRA_ID" --export-dir="$EXPORT_DIR"
+python src/main.py "$JIRA_ID" "${@:2}"

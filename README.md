@@ -41,15 +41,36 @@ Alternatively, set environment variables `JIRA_SERVER`, `JIRA_EMAIL`, `JIRA_TOKE
 ./runme.sh PRODUCT-12345
 ```
 
-The export directory is configured inside `runme.sh` (`EXPORT_DIR` variable). Edit it once to point at your Obsidian vault or preferred output location.
+Extra arguments are forwarded, so `./runme.sh PRODUCT-12345 --link-style=github` works.
 
 Alternatively, invoke Python directly after activating the venv:
 
 ```bash
 source .venv/bin/activate
-python src/main.py PRODUCT-12345
 python src/main.py PRODUCT-12345 --export-dir=/path/to/output
+SPECS_PATH=/path/to/specs-repo python src/main.py PRODUCT-12345
+VAULT_PATH=/path/to/obsidian-vault python src/main.py PRODUCT-12345
 ```
+
+### Where the export goes
+
+The destination is resolved from the first rule that applies. There is no
+default — with none of these set the run stops immediately with an error,
+before contacting Jira.
+
+| # | Given | Destination | Layout | Links |
+|---|-------|-------------|--------|-------|
+| 1 | `--export-dir=<path>` | `<path>` | nested | obsidian |
+| 2 | `SPECS_PATH=<repo>` | `<repo>/specifications/<ID>-<slug>/jira-import` | flat | github |
+| 3 | `VAULT_PATH=<vault>` | `<vault>/jira-products` | nested | obsidian |
+| 4 | none of the above | *error* | — | — |
+
+An environment variable set to the empty string counts as unset. Under rule 2
+the `<ID>-<slug>` directory is matched case-insensitively; if none exists a
+bare `<ID>` directory is used, and if several match the run stops and asks you
+to pick one with `--export-dir`.
+
+`--link-style=obsidian|github` overrides the inferred link style.
 
 ## What gets exported
 
@@ -65,11 +86,12 @@ Each issue is exported exactly once (deduplicated).
 
 ## Output
 
-Each import gets its own subdirectory, keeping multiple imports cleanly separated:
+**Nested** (`--export-dir` or `VAULT_PATH`) — the destination holds many
+imports, so each gets its own subdirectory and a registry lists them:
 
 ```
-.data/
-├── export-index.md              # top-level index listing all imports
+<destination>/
+├── export-index.md              # registry listing all imports
 ├── PRODUCT-12345/               # one import = one subdirectory
 │   ├── PRODUCT-12345-index.md   # per-import index (full detail, hierarchy, relationships)
 │   ├── PRODUCT-12345/           # root ticket files
@@ -87,14 +109,30 @@ Each import gets its own subdirectory, keeping multiple imports cleanly separate
 │   └── ...
 ```
 
+**Flat** (`SPECS_PATH`) — the destination already belongs to one Value
+Increment, so there is no `<ID>` level and no registry. Comments are inlined
+into the ticket page rather than written as separate files:
+
+```
+<repo>/specifications/PRODUCT-12345-some-slug/jira-import/
+├── PRODUCT-12345-index.md
+├── PRODUCT-12345/
+│   ├── PRODUCT-12345.md         # comments inlined under "## Comments"
+│   └── attachments/
+├── EPIC-100/
+│   └── EPIC-100.md
+└── STORY-200/
+    └── STORY-200.md
+```
+
 ### export-index.md (top-level)
 
-A simple table listing all root imported tickets with wikilinks to their per-import indexes.
+A simple table listing all root imported tickets, linked to their per-import indexes. Written for nested layouts only — a flat destination holds exactly one import.
 
 ### PRODUCT-12345-index.md (per-import)
 
 Contains:
-- **Backlink** to `[[export-index]]`
+- **Backlink** to the registry (nested layouts only — a flat destination writes no registry, so the backlink is omitted)
 - **Summary table** — all exported issues with type, status, summary, and role (root/linked/epic_child)
 - **Relationship map** — link types between issues with directional arrows
 - **Epic hierarchy** — tree view of Epic → Story → Task chains
@@ -103,26 +141,63 @@ Contains:
 ### Per-issue markdown
 
 Each `<KEY>.md` includes:
-- Backlink to `[[PRODUCT-12345-index]]` (the per-import index) for navigation
+- Backlink to the per-import index for navigation
 - YAML frontmatter (all Jira fields)
 - Metadata section (type, status, assignee, team, parent)
 - Status details and description (converted from Jira markup)
-- Attachments (downloaded, with `![[image]]` embeds)
+- Attachments (embedded images, plus a file list)
 - Release notes (if present)
-- Linked issues (grouped by link type, as `[[KEY]]` wikilinks)
+- Linked issues (grouped by link type)
 - Pull requests (title, URL, repo, branch, status)
-- Comments (embedded via `![[KEY-comments]]` transclusion)
+- Comments (transcluded from `<KEY>-comments.md`, or inlined — see below)
 
 ### Navigation
 
-All internal links use **Obsidian wikilinks** (`[[KEY]]`):
-- `export-index.md` links to each import via `[[PRODUCT-12345-index]]`
-- Each per-import index links back to `[[export-index]]`
-- Each ticket links back to its per-import index (e.g., `[[PRODUCT-12345-index]]`)
-- Linked issues, parent tickets, and Epic children are all `[[KEY]]` wikilinks
-- Comments are embedded via `![[KEY-comments]]` transclusion
-- Issues not in the export (external links) fall back to Jira URLs
-- Wikilinks inside markdown tables are pipe-escaped (`\\|`) to avoid breaking table structure
+Two link styles, chosen by `--link-style` or inferred from the destination.
+GitHub's file browser renders neither `[[KEY]]` nor `![[image]]`, so an export
+meant to be read in a pull request needs plain relative markdown links.
+
+| | `obsidian` | `github` |
+|---|---|---|
+| Issue in the export | `[[KEY]]` | `[KEY](../KEY/KEY.md)` |
+| Issue outside it | Jira URL | Jira URL |
+| Index backlink | `[[PRODUCT-12345-index]]` | `[PRODUCT-12345-index](../PRODUCT-12345-index.md)` |
+| Image | `![[image.png]]` | `![image.png](attachments/image.png)` |
+| Other attachment | `[[file.pdf]]` | `[file.pdf](attachments/file.pdf)` |
+| Comments | `![[KEY-comments]]` transclusion | inlined into `<KEY>.md` |
+
+Under either style, links inside markdown tables are pipe-escaped (`\\|`) so
+they do not break the table, and issues outside the export fall back to Jira
+URLs. GitHub link targets are percent-encoded, so spaces and parentheses in a
+filename survive.
+
+One deliberate asymmetry: a bare issue key mentioned in *body text* stays a
+`[[KEY]]` wikilink under the obsidian style even when the key is outside this
+export, because Obsidian resolves wikilinks by filename across the whole vault
+and will reach a ticket exported by a different import. Structural links —
+index rows, **Parent**, **Linked Issues** — fall back to a Jira URL in both
+styles.
+
+### Attachment downloads
+
+Under the obsidian style every attachment is downloaded. Under the github
+style only an allowlist is: images, documents (`pdf`, office formats, `csv`),
+and text/data formats. Everything else — archives, dumps, binaries, and
+extensionless blobs — is left in Jira and rendered as a sized link:
+
+```markdown
+- [SupportArchive3F642709.zip](https://…/attachment/98123) (11.2 MB)
+```
+
+In a 163 MB vault export, archives accounted for 45.9 MB across 46 files —
+40% of the attachment weight in 4% of the files — which is not something to
+commit to a specs repository.
+
+An attachment whose download fails is rendered the same way, as a link back to
+Jira. An attachment Jira no longer returns at all — deleted, or not visible to
+your account — has no URL to fall back on, so references to it are rendered as
+`*(attachment unavailable: <filename>)*` rather than as a link to a file that
+was never written.
 
 ## PII Anonymization
 
@@ -133,4 +208,9 @@ All internal links use **Obsidian wikilinks** (`[[KEY]]`):
 
 ## Re-exporting
 
-Running the tool again for the same ticket will delete and recreate each issue's folder within its import subdirectory. The top-level `export-index.md` is rewritten on every run to reflect all current imports. No snapshot history is maintained.
+Running the tool again for the same ticket will delete and recreate each issue's folder within its import subdirectory. The registry `export-index.md` is rewritten on every run to reflect all current imports. No snapshot history is maintained.
+
+Only the folders of issues in the *current* graph are recreated. If a link is
+removed in Jira between runs, that issue's directory is left behind from the
+previous export and has to be deleted by hand — the tool never removes a
+directory it did not just write.

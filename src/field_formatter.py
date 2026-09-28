@@ -3,9 +3,8 @@ Field formatter for Jira fields.
 Handles complex field types and formatting.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional
 from datetime import datetime
-from config import JIRA_BASE_URL
 
 
 class FieldFormatter:
@@ -54,11 +53,6 @@ class FieldFormatter:
         return result if result else None
     
     @staticmethod
-    def format_issue_link(key: str) -> str:
-        """Format issue link as an Obsidian wikilink."""
-        return f"[[{key}]]"
-    
-    @staticmethod
     def format_parent(parent: Any) -> Optional[str]:
         """
         Format parent issue field for frontmatter (key only).
@@ -77,82 +71,6 @@ class FieldFormatter:
             return None
         
         return key
-    
-    @staticmethod
-    def format_parent_link(parent: Any) -> Optional[str]:
-        """
-        Format parent issue field for document body.
-        
-        Args:
-            parent: Parent issue object
-            
-        Returns:
-            str: Formatted issue link
-        """
-        if not parent:
-            return None
-        
-        key = getattr(parent, 'key', None)
-        if not key:
-            return None
-        
-        return FieldFormatter.format_issue_link(key)
-    
-    @staticmethod
-    def format_linked_issues(links: Any) -> Optional[List[str]]:
-        """Format linked issues."""
-        if not links:
-            return None
-        
-        result = []
-        for link in links:
-            # Get the linked issue key
-            if hasattr(link, 'outwardIssue'):
-                issue = link.outwardIssue
-                link_type = getattr(link.type, 'outward', 'relates to')
-            elif hasattr(link, 'inwardIssue'):
-                issue = link.inwardIssue
-                link_type = getattr(link.type, 'inward', 'relates to')
-            else:
-                continue
-            
-            key = getattr(issue, 'key', None)
-            if key:
-                formatted = f"{link_type}: {FieldFormatter.format_issue_link(key)}"
-                result.append(formatted)
-        
-        return result if result else None
-    
-    @staticmethod
-    def format_linked_issues_grouped(links: Any) -> Optional[Dict[str, List[str]]]:
-        """
-        Format linked issues grouped by relationship type.
-        
-        Returns:
-            Dict mapping relationship type to list of issue links
-        """
-        if not links:
-            return None
-        
-        grouped = {}
-        for link in links:
-            # Get the linked issue key
-            if hasattr(link, 'outwardIssue'):
-                issue = link.outwardIssue
-                link_type = getattr(link.type, 'outward', 'relates to')
-            elif hasattr(link, 'inwardIssue'):
-                issue = link.inwardIssue
-                link_type = getattr(link.type, 'inward', 'relates to')
-            else:
-                continue
-            
-            key = getattr(issue, 'key', None)
-            if key:
-                if link_type not in grouped:
-                    grouped[link_type] = []
-                grouped[link_type].append(FieldFormatter.format_issue_link(key))
-        
-        return grouped if grouped else None
     
     @staticmethod
     def format_custom_field(value: Any) -> Optional[str]:
