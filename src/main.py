@@ -6,7 +6,6 @@ Exports a single Jira workitem and its full dependency graph to markdown.
 import argparse
 import os
 import sys
-from pathlib import Path
 
 # Add src directory to path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -16,9 +15,7 @@ from graph_walker import GraphWalker
 from markdown_exporter import MarkdownExporter
 from index_generator import generate_import_index, update_top_level_index
 from pii_scrubber import PiiScrubber
-
-
-DEFAULT_EXPORT_DIR = ".data"
+from export_paths import ExportPathError, resolve_export_target
 
 
 def main():
@@ -31,13 +28,24 @@ def main():
     )
     parser.add_argument(
         "--export-dir",
-        default=DEFAULT_EXPORT_DIR,
-        help=f"Output directory (default: {DEFAULT_EXPORT_DIR})",
+        default=None,
+        help="Output directory. Overrides SPECS_PATH and VAULT_PATH.",
     )
     args = parser.parse_args()
 
-    data_dir = Path(os.getcwd()) / args.export_dir
+    try:
+        target = resolve_export_target(args.jira_id, args.export_dir, os.environ)
+    except ExportPathError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    data_dir = target.data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
+
+    print("=" * 50)
+    print(f"Destination: {data_dir}")
+    print(f"Source:      {target.origin}    Layout: {target.layout}")
+    print("=" * 50)
 
     # Authenticate
     try:
@@ -66,8 +74,8 @@ def main():
         print("No issues found. Nothing to export.")
         sys.exit(0)
 
-    # Export to markdown — each import gets its own subdirectory
-    import_dir = data_dir / args.jira_id
+    # Flat layout: the destination is already import-specific, so no <ID> level.
+    import_dir = data_dir if target.layout == "flat" else data_dir / args.jira_id
     import_dir.mkdir(parents=True, exist_ok=True)
 
     print()
@@ -85,9 +93,10 @@ def main():
     index_path.write_text(index_content, encoding="utf-8")
     print(f"\nImport index: {index_path}")
 
-    # Update top-level index
-    update_top_level_index(data_dir)
-    print(f"Top-level index: {data_dir / 'export-index.md'}")
+    # The registry lists sibling imports; a flat destination holds exactly one.
+    if target.layout == "nested":
+        update_top_level_index(data_dir)
+        print(f"Top-level index: {data_dir / 'export-index.md'}")
 
     # Summary
     print()
