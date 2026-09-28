@@ -193,6 +193,12 @@ In a 163 MB vault export, archives accounted for 45.9 MB across 46 files —
 40% of the attachment weight in 4% of the files — which is not something to
 commit to a specs repository.
 
+An attachment whose download fails is rendered the same way, as a link back to
+Jira. An attachment Jira no longer returns at all — deleted, or not visible to
+your account — has no URL to fall back on, so references to it are rendered as
+`*(attachment unavailable: <filename>)*` rather than as a link to a file that
+was never written.
+
 ## PII Anonymization
 
 - Person names → consistent `User-N` placeholders across the entire export

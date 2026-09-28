@@ -13,6 +13,15 @@ from link_renderer import Location, ObsidianLinks
 
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.ico'}
 
+#: A leftover reference to an attachment that was never written and has no
+#: URL to fall back on. Requires a file extension, so markdown footnote
+#: syntax ([^1]) and bare [^note] are left alone.
+_NAME = r'[^\s\]\)/:]+\.[A-Za-z0-9]{1,10}'
+UNRESOLVED_PATTERNS = (
+    re.compile(rf'!\[\]\(({_NAME})\)'),      # Jira image, post-conversion
+    re.compile(rf'(?<!\[)\[\^({_NAME})\]'),  # Jira attachment link
+)
+
 
 class AttachmentHandler:
     """Downloads and manages Jira attachments for a single export."""
@@ -24,6 +33,7 @@ class AttachmentHandler:
         self.links = links if links is not None else ObsidianLinks("", ()).at(Location.ticket(""))
         self.downloaded_files: Dict[str, str] = {}  # original_name -> local_filename
         self.skipped: List[Tuple[str, str, int]] = []  # (filename, url, size)
+        self.failed: List[Tuple[str, str, int]] = []   # download raised; same shape
 
     def _should_download(self, filename: str) -> bool:
         """None means download everything (Obsidian). Otherwise allowlist by
@@ -55,6 +65,14 @@ class AttachmentHandler:
             if local:
                 self.downloaded_files[attachment.filename] = local
                 (images if self._is_image(local) else others).append(local)
+            else:
+                # Nothing was written, so references must point at Jira
+                # rather than at a file that is not there.
+                self.failed.append((
+                    attachment.filename,
+                    getattr(attachment, 'content', ''),
+                    getattr(attachment, 'size', 0),
+                ))
 
         return images, others
 
@@ -82,49 +100,90 @@ class AttachmentHandler:
     def _is_image(filename: str) -> bool:
         return Path(filename).suffix.lower() in IMAGE_EXTENSIONS
 
+    @staticmethod
+    def _image_patterns(f: str) -> tuple:
+        """Jira image references, post-conversion. `f` is an escaped filename."""
+        return (
+            rf'!\[\]\({f}[^\)]*\)',
+            rf'!\[\]\(\[\]\({f}[^\)]*\)\)',
+            rf'!{f}[^!]*!',
+        )
+
+    @staticmethod
+    def _link_patterns(f: str) -> tuple:
+        """Jira attachment links, with and without the caret form."""
+        return (
+            rf'(?<!\[)\[(\^{f}|{f})\]\((\^{f}|{f})\)',
+            rf'(?<!\[)\[(\^{f}|{f})\]\([^)]+/{f}\)',
+            rf'(?<!\[)\[(\^{f}|{f})\](?![\(\[])',
+        )
+
     def replace_attachment_references(self, text: str) -> str:
-        """Rewrite Jira attachment references through the bound renderer."""
+        """Rewrite Jira attachment references through the bound renderer.
+
+        Each match becomes a placeholder and the rendered text is substituted
+        back at the end. Without that, a later pattern re-matches a link an
+        earlier one just wrote -- an external link ending in "/<filename>" is
+        matched by the "[name](.../name)" pattern -- and the size suffix is
+        appended twice. It also keeps the unresolved sweep off these links.
+        """
         if not text:
             return text
         at = self.links
+        rendered: Dict[str, str] = {}
+
+        def stash(replacement: str):
+            """A re.sub replacement that banks the text and leaves a token."""
+            def substitute(_match):
+                token = f"<<<ATT{len(rendered)}>>>"
+                rendered[token] = replacement
+                return token
+            return substitute
+
         for original, local in self.downloaded_files.items():
-            escaped = re.escape(original)
+            f = re.escape(original)
             if self._is_image(local):
                 repl = at.image(local)
-                patterns = [
-                    rf'!\[\]\({escaped}[^\)]*\)',
-                    rf'!\[\]\(\[\]\({escaped}[^\)]*\)\)',
-                    rf'\)\]\({escaped}\)',
-                    rf'!{escaped}[^!]*!',
-                ]
+                patterns = self._image_patterns(f) + (rf'\)\]\({f}\)',)
             else:
                 repl = at.attachment(local)
-                escaped_caret = re.escape(f"^{original}")
-                patterns = [
-                    rf'(?<!\[)\[(\^{escaped}|{escaped})\]\((\^{escaped}|{escaped})\)',
-                    rf'(?<!\[)\[(\^{escaped}|{escaped})\]\([^)]+/{escaped}\)',
-                    rf'(?<!\[)\[(\^{escaped}|{escaped})\](?![\(\[])',
-                    rf'(?<!\[\[){escaped_caret}(?!\]\])',
-                ]
+                patterns = self._link_patterns(f) + (rf'(?<!\[\[)\^{f}(?!\]\])',)
             for pat in patterns:
-                # A lambda replacement, so a rendered link is inserted
-                # literally rather than read for backreferences.
-                text = re.sub(pat, lambda _m, r=repl: r, text)
+                text = re.sub(pat, stash(repl), text)
 
-        # A skipped file was never written, so its reference points at Jira.
-        for filename, url, size in self.skipped:
-            escaped = re.escape(filename)
+        # Skipped or failed: never written, but we have the Jira URL. Image
+        # forms count too -- a failed image download leaves an ![](name)
+        # reference behind exactly like a missing file does.
+        for filename, url, size in self.elsewhere:
+            f = re.escape(filename)
             repl = at.external_file(filename, url, size)
-            for pat in (
-                rf'(?<!\[)\[(\^{escaped}|{escaped})\]\((\^{escaped}|{escaped})\)',
-                rf'(?<!\[)\[(\^{escaped}|{escaped})\]\([^)]+/{escaped}\)',
-                rf'(?<!\[)\[(\^{escaped}|{escaped})\](?![\(\[])',
-            ):
-                text = re.sub(pat, lambda _m, r=repl: r, text)
+            for pat in self._image_patterns(f) + self._link_patterns(f):
+                text = re.sub(pat, stash(repl), text)
+
+        text = self._mark_unresolved(text)
+        for token, replacement in rendered.items():
+            text = text.replace(token, replacement)
+        return text
+
+    @property
+    def elsewhere(self) -> List[Tuple[str, str, int]]:
+        """Attachments that stayed in Jira, whether by policy or by failure."""
+        return self.skipped + self.failed
+
+    @staticmethod
+    def _mark_unresolved(text: str) -> str:
+        """Flag references to attachments Jira did not return at all.
+
+        They were deleted, or are not visible to this account, so there is no
+        URL to link to. Left alone they render as a broken image in GitHub and
+        a dangling embed in Obsidian."""
+        for pattern in UNRESOLVED_PATTERNS:
+            text = pattern.sub(
+                lambda m: f"*(attachment unavailable: {m.group(1)})*", text)
         return text
 
     def get_attachment_list_markdown(self, images: List[str], others: List[str]) -> str:
-        if not images and not others and not self.skipped:
+        if not images and not others and not self.elsewhere:
             return ""
         at = self.links
         lines = ["## Attachments", ""]
@@ -134,12 +193,12 @@ class AttachmentHandler:
             for img in images:
                 lines.append(at.image(img))
                 lines.append("")
-        if others or self.skipped:
+        if others or self.elsewhere:
             lines.append("### Files")
             lines.append("")
             for f in others:
                 lines.append(f"- {at.attachment(f)}")
-            for filename, url, size in self.skipped:
+            for filename, url, size in self.elsewhere:
                 lines.append(f"- {at.external_file(filename, url, size)}")
             lines.append("")
         return '\n'.join(lines)

@@ -145,3 +145,68 @@ def test_filenames_with_parens_are_encoded_in_github_references(tmp_path):
     h.download_attachments(FakeIssue([att]))
     out = h.replace_attachment_references("![](Screenshot(1).png)")
     assert "attachments/Screenshot%281%29.png" in out
+
+
+# --- Attachments that never reached disk -------------------------------------
+
+class ExplodingAttachment(FakeAttachment):
+    def get(self):
+        raise RuntimeError("403 Forbidden")
+
+
+def test_failed_download_renders_as_a_jira_link_not_a_broken_one(tmp_path):
+    """A download that raises leaves no file, so the reference must not keep
+    pointing at one."""
+    att = ExplodingAttachment("diagram.png", size=4096)
+    h = handler(tmp_path, None)
+    images, others = h.download_attachments(FakeIssue([att]))
+    assert images == [] and others == []
+    out = h.replace_attachment_references("![](diagram.png)")
+    assert out == f"[diagram.png]({BASE}/attachment/diagram.png) (4.0 KB)"
+
+
+def test_failed_download_is_listed_in_the_attachments_section(tmp_path):
+    att = ExplodingAttachment("diagram.png", size=4096)
+    h = handler(tmp_path, None)
+    images, others = h.download_attachments(FakeIssue([att]))
+    md = h.get_attachment_list_markdown(images, others)
+    assert f"[diagram.png]({BASE}/attachment/diagram.png) (4.0 KB)" in md
+
+
+def test_reference_to_an_attachment_jira_no_longer_returns_is_marked(tmp_path):
+    """Real data: DAQ-25762 references six images, but fields.attachment is
+    empty — they were deleted in Jira. Without a URL the only honest output is
+    a marker; a relative link would 404 in GitHub and dangle in Obsidian."""
+    h = handler(tmp_path, None)
+    h.download_attachments(FakeIssue([]))
+    out = h.replace_attachment_references("see ![](image-20260518-105203.png) here")
+    assert out == "see *(attachment unavailable: image-20260518-105203.png)* here"
+
+
+def test_unresolvable_caret_reference_is_marked(tmp_path):
+    h = handler(tmp_path, None)
+    out = h.replace_attachment_references("see [^SupportArchive3F642709.zip]")
+    assert out == "see *(attachment unavailable: SupportArchive3F642709.zip)*"
+
+
+def test_markdown_footnotes_are_not_mistaken_for_attachments(tmp_path):
+    """[^1] is footnote syntax, not a Jira attachment reference."""
+    h = handler(tmp_path, None)
+    text = "a claim[^1]\n\n[^1]: the note"
+    assert h.replace_attachment_references(text) == text
+
+
+def test_rendered_links_are_not_swept_as_unresolvable(tmp_path):
+    """The sweep runs last; it must not touch links this handler just wrote."""
+    att = FakeAttachment("flow.png")
+    h = handler(tmp_path, None, links=github_at())
+    h.download_attachments(FakeIssue([att]))
+    out = h.replace_attachment_references("![](flow.png)")
+    assert out == "![flow.png](attachments/flow.png)"
+    assert "unavailable" not in out
+
+
+def test_external_image_urls_are_not_swept(tmp_path):
+    h = handler(tmp_path, None)
+    text = "![](https://example.com/pic.png)"
+    assert h.replace_attachment_references(text) == text
