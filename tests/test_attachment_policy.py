@@ -210,3 +210,86 @@ def test_external_image_urls_are_not_swept(tmp_path):
     h = handler(tmp_path, None)
     text = "![](https://example.com/pic.png)"
     assert h.replace_attachment_references(text) == text
+
+
+# ---------------------------------------------------------------------------
+# Regressions found in review (2026-09-28)
+# ---------------------------------------------------------------------------
+
+def downloaded(tmp_path, **files):
+    """A handler with `files` already recorded as written to disk."""
+    h = AttachmentHandler(None, str(tmp_path / "attachments"),
+                          links=GithubLinks(BASE, set()).at(Location.ticket("A")))
+    h.downloaded_files = dict(files)
+    return h
+
+
+def test_link_form_reference_to_a_downloaded_image_is_not_marked_unavailable(tmp_path):
+    """Jira's [^file] macro works for images too. Claiming the file is gone
+    while it sits in attachments/ is a lie the export must not tell."""
+    h = downloaded(tmp_path, **{"flow.png": "flow.png"})
+    out = h.replace_attachment_references("see [^flow.png] here")
+    assert "unavailable" not in out
+    assert out == "see [flow.png](attachments/flow.png) here"
+
+
+def test_embed_form_reference_to_a_downloaded_non_image_becomes_a_link(tmp_path):
+    """!spec.pdf! cannot be embedded in markdown; render it as a link."""
+    h = downloaded(tmp_path, **{"spec.pdf": "spec.pdf"})
+    out = h.replace_attachment_references("see !spec.pdf! here")
+    assert out == "see [spec.pdf](attachments/spec.pdf) here"
+
+
+def test_embed_form_reference_to_a_downloaded_image_still_embeds(tmp_path):
+    h = downloaded(tmp_path, **{"flow.png": "flow.png"})
+    out = h.replace_attachment_references("see ![](flow.png) here")
+    assert out == "see ![flow.png](attachments/flow.png) here"
+
+
+def test_unresolved_sweep_leaves_fenced_code_alone(tmp_path):
+    h = downloaded(tmp_path)
+    text = "before\n```\n![](secret.png)\n```\nafter"
+    assert h.replace_attachment_references(text) == text
+
+
+def test_unresolved_sweep_leaves_inline_code_alone(tmp_path):
+    h = downloaded(tmp_path)
+    text = "use `![](secret.png)` verbatim"
+    assert h.replace_attachment_references(text) == text
+
+
+def test_unresolved_sweep_leaves_numeric_footnote_labels_alone(tmp_path):
+    """[^RFC.2119] is a footnote, not a filename: its extension has no letter."""
+    h = downloaded(tmp_path)
+    text = "see [^RFC.2119] and [^1] and [^note]"
+    assert h.replace_attachment_references(text) == text
+
+
+def test_unresolved_sweep_still_marks_a_real_missing_attachment(tmp_path):
+    h = downloaded(tmp_path)
+    out = h.replace_attachment_references("see [^deleted.png] here")
+    assert out == "see *(attachment unavailable: deleted.png)* here"
+
+
+def test_skipped_attachment_without_a_content_url_is_marked_unavailable(tmp_path):
+    """An empty href renders as a link to the current page."""
+    h = downloaded(tmp_path)
+    h.skipped = [("SupportArchive.zip", "", 11_744_051)]
+    md = h.get_attachment_list_markdown([], [])
+    assert "]()" not in md
+    assert "*(attachment unavailable: SupportArchive.zip)*" in md
+
+
+def test_reference_to_a_urlless_skipped_attachment_is_marked_unavailable(tmp_path):
+    h = downloaded(tmp_path)
+    h.skipped = [("SupportArchive.zip", "", 2048)]
+    out = h.replace_attachment_references("see [^SupportArchive.zip] here")
+    assert "]()" not in out
+    assert out == "see *(attachment unavailable: SupportArchive.zip)* here"
+
+
+def test_bare_caret_reference_to_a_skipped_file_is_rewritten(tmp_path):
+    h = downloaded(tmp_path)
+    h.skipped = [("SupportArchive.zip", "https://ex.net/att/1", 2048)]
+    out = h.replace_attachment_references("see ^SupportArchive.zip here")
+    assert out == "see [SupportArchive.zip](https://ex.net/att/1) (2.0 KB) here"

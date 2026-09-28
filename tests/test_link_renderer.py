@@ -163,3 +163,39 @@ def test_github_index_alias_becomes_the_link_text():
     assert at.index("PRODUCT-1-index", alias="PRODUCT-1") == (
         "[PRODUCT-1](PRODUCT-1/PRODUCT-1-index.md)"
     )
+
+
+# ---------------------------------------------------------------------------
+# Regressions found in review (2026-09-28): only the path half of a markdown
+# link was sanitised; the text half and external URLs were passed through raw.
+# ---------------------------------------------------------------------------
+
+def test_github_escapes_brackets_in_link_text():
+    at = github().at(Location.ticket("MGD-2"))
+    assert at.attachment("a]b.png") == "[a\\]b.png](attachments/a%5Db.png)"
+    assert at.image("r[1].png") == "![r\\[1\\].png](attachments/r%5B1%5D.png)"
+
+
+def test_external_file_escapes_brackets_in_link_text():
+    at = github().at(Location.ticket("MGD-2"))
+    out = at.external_file("r[v2].zip", "https://ex.net/a/1", 2048)
+    assert out == "[r\\[v2\\].zip](https://ex.net/a/1) (2.0 KB)"
+
+
+def test_external_file_escapes_link_breaking_chars_in_the_url():
+    at = github().at(Location.ticket("MGD-2"))
+    out = at.external_file("f.zip", "https://ex.net/a (1).zip")
+    assert out == "[f.zip](https://ex.net/a%20%281%29.zip)"
+
+
+def test_external_file_does_not_double_encode_a_percent():
+    at = github().at(Location.ticket("MGD-2"))
+    out = at.external_file("f.zip", "https://ex.net/a%20b.zip")
+    assert out == "[f.zip](https://ex.net/a%20b.zip)"
+
+
+def test_obsidian_wikilinks_are_left_alone():
+    """Vault output must stay byte-identical; wikilinks cannot escape brackets."""
+    at = obsidian().at(Location.ticket("MGD-2"))
+    assert at.attachment("a]b.png") == "[[a]b.png]]"
+    assert at.image("r[1].png") == "![[r[1].png]]"
