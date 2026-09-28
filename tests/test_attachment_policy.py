@@ -293,3 +293,42 @@ def test_bare_caret_reference_to_a_skipped_file_is_rewritten(tmp_path):
     h.skipped = [("SupportArchive.zip", "https://ex.net/att/1", 2048)]
     out = h.replace_attachment_references("see ^SupportArchive.zip here")
     assert out == "see [SupportArchive.zip](https://ex.net/att/1) (2.0 KB) here"
+
+
+def test_unresolved_sweep_handles_parentheses_in_filenames(tmp_path):
+    """Real vault data: SupportArchiveD2DFE639(1).zip. The name pattern
+    excluded ')', so this reference escaped both rewriting and the sweep and
+    shipped as a literal [^...] in the export."""
+    h = downloaded(tmp_path)
+    out = h.replace_attachment_references("Attaching: [^SupportArchiveD2DFE639(1).zip]")
+    assert out == "Attaching: *(attachment unavailable: SupportArchiveD2DFE639(1).zip)*"
+
+
+def test_unresolved_sweep_handles_parentheses_in_image_references(tmp_path):
+    h = downloaded(tmp_path)
+    out = h.replace_attachment_references("see ![](Screenshot(1).png) here")
+    assert out == "see *(attachment unavailable: Screenshot(1).png)* here"
+
+
+def test_unresolved_sweep_does_not_run_together_two_references(tmp_path):
+    """The widened name pattern must still stop at whitespace."""
+    h = downloaded(tmp_path)
+    out = h.replace_attachment_references("![](a.png) and ![](b.png)")
+    assert out == (
+        "*(attachment unavailable: a.png)* and *(attachment unavailable: b.png)*"
+    )
+
+
+def test_downloaded_reference_inside_code_is_left_verbatim(tmp_path):
+    """A description documenting Jira syntax must survive even when the file
+    it names was in fact downloaded — the sweep already skips code spans, and
+    reference rewriting has to skip them for the same reason."""
+    h = downloaded(tmp_path, **{"flow.png": "flow.png"})
+    text = "use `![](flow.png)` verbatim\n\n```\n[^flow.png]\n```"
+    assert h.replace_attachment_references(text) == text
+
+
+def test_rewriting_outside_code_still_happens_when_code_is_present(tmp_path):
+    h = downloaded(tmp_path, **{"flow.png": "flow.png"})
+    out = h.replace_attachment_references("`literal ![](flow.png)` but ![](flow.png) here")
+    assert out == "`literal ![](flow.png)` but ![flow.png](attachments/flow.png) here"

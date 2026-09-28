@@ -18,14 +18,15 @@ IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.
 #: letter, so markdown footnotes are left alone -- both the bare forms ([^1],
 #: [^note]) and labelled ones whose suffix is numeric ([^RFC.2119]).
 _EXT = r'[A-Za-z0-9]{0,9}[A-Za-z][A-Za-z0-9]{0,9}'
-_NAME = rf'[^\s\]\)/:]+\.{_EXT}'
+_NAME = rf'[^\s\]/:]*\.{_EXT}'
 UNRESOLVED_PATTERNS = (
     re.compile(rf'!\[\]\(({_NAME})\)'),      # Jira image, post-conversion
     re.compile(rf'(?<!\[)\[\^({_NAME})\]'),  # Jira attachment link
 )
 
-#: Fenced and inline code, captured so the unresolved sweep can skip it. A
-#: description quoting markdown must survive as written.
+#: Fenced and inline code, captured so reference rewriting can skip it. A
+#: description quoting attachment syntax is documenting it, not referring to
+#: an attachment, and must survive as written.
 CODE_SPANS = re.compile(r'(```.*?```|~~~.*?~~~|`[^`\n]+`)', re.DOTALL)
 
 
@@ -140,6 +141,14 @@ class AttachmentHandler:
         """
         if not text:
             return text
+        # Odd indices are the code spans; rewrite only the prose between them.
+        parts = CODE_SPANS.split(text)
+        for i in range(0, len(parts), 2):
+            parts[i] = self._rewrite_prose(parts[i])
+        return "".join(parts)
+
+    def _rewrite_prose(self, text: str) -> str:
+        """Rewrite every attachment reference in one code-free span."""
         at = self.links
         rendered: Dict[str, str] = {}
 
@@ -201,13 +210,10 @@ class AttachmentHandler:
         URL to link to. Left alone they render as a broken image in GitHub and
         a dangling embed in Obsidian.
 
-        Code spans are skipped: a description quoting markdown is documenting
-        the syntax, not referencing an attachment."""
-        parts = CODE_SPANS.split(text)
-        for i in range(0, len(parts), 2):   # odd indices are the code spans
-            for pattern in UNRESOLVED_PATTERNS:
-                parts[i] = pattern.sub(lambda m: _unavailable(m.group(1)), parts[i])
-        return "".join(parts)
+        The caller has already stripped code spans."""
+        for pattern in UNRESOLVED_PATTERNS:
+            text = pattern.sub(lambda m: _unavailable(m.group(1)), text)
+        return text
 
     def get_attachment_list_markdown(self, images: List[str], others: List[str]) -> str:
         if not images and not others and not self.elsewhere:
