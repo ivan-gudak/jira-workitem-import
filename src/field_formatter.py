@@ -54,8 +54,10 @@ class FieldFormatter:
         return result if result else None
     
     @staticmethod
-    def format_issue_link(key: str) -> str:
-        """Format issue link as an Obsidian wikilink."""
+    def format_issue_link(key: str, links=None) -> str:
+        """Format an issue link. Wikilink when no renderer is supplied."""
+        if links is not None:
+            return links.issue(key)
         return f"[[{key}]]"
     
     @staticmethod
@@ -79,7 +81,7 @@ class FieldFormatter:
         return key
     
     @staticmethod
-    def format_parent_link(parent: Any) -> Optional[str]:
+    def format_parent_link(parent: Any, links=None) -> Optional[str]:
         """
         Format parent issue field for document body.
         
@@ -96,7 +98,7 @@ class FieldFormatter:
         if not key:
             return None
         
-        return FieldFormatter.format_issue_link(key)
+        return FieldFormatter.format_issue_link(key, links)
     
     @staticmethod
     def format_linked_issues(links: Any) -> Optional[List[str]]:
