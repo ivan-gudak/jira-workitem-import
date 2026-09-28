@@ -128,3 +128,71 @@ def test_registry_rows_are_relative_links_under_github(tmp_path):
     out = (tmp_path / "export-index.md").read_text(encoding="utf-8")
     assert "| [PRODUCT-1](PRODUCT-1/PRODUCT-1-index.md) | Epic | Open | A summary |" in out
     assert "[[" not in out
+
+
+# ---------------------------------------------------------------------------
+# Epic hierarchy: _render_tree had no fixture with children, so neither the
+# recursion nor its renderer calls ever ran.
+# ---------------------------------------------------------------------------
+
+class FakeParent:
+    def __init__(self, key):
+        self.key = key
+
+
+def epic_nodes():
+    """PRODUCT-1 (Epic) -> MGD-2 (Story) -> MGD-3 (Sub-task)."""
+    nodes = {
+        "PRODUCT-1": FakeNode(
+            "PRODUCT-1", FakeIssue("PRODUCT-1", summary="The epic", itype="Epic"), "root", []),
+        "MGD-2": FakeNode(
+            "MGD-2", FakeIssue("MGD-2", summary="Child", itype="Story"), "epic_child", []),
+        "MGD-3": FakeNode(
+            "MGD-3", FakeIssue("MGD-3", summary="Grandchild", itype="Sub-task"), "epic_child", []),
+    }
+    nodes["MGD-2"].issue.fields.parent = FakeParent("PRODUCT-1")
+    nodes["MGD-3"].issue.fields.parent = FakeParent("MGD-2")
+    return nodes
+
+
+def test_epic_hierarchy_renders_children_through_the_renderer():
+    nodes = epic_nodes()
+    out = generate_import_index(None, nodes, "PRODUCT-1",
+                                links=GithubLinks(BASE, nodes.keys()), layout="flat")
+    assert "### [PRODUCT-1](PRODUCT-1/PRODUCT-1.md): The epic" in out
+    assert "- [MGD-2](MGD-2/MGD-2.md) (Story) — Child" in out
+    assert "[[" not in out
+
+
+def test_epic_hierarchy_indents_grandchildren():
+    nodes = epic_nodes()
+    out = generate_import_index(None, nodes, "PRODUCT-1",
+                                links=GithubLinks(BASE, nodes.keys()), layout="flat")
+    assert "\n- [MGD-2](MGD-2/MGD-2.md) (Story) — Child" in out
+    assert "\n  - [MGD-3](MGD-3/MGD-3.md) (Sub-task) — Grandchild" in out
+
+
+def test_epic_hierarchy_uses_wikilinks_under_obsidian():
+    nodes = epic_nodes()
+    out = generate_import_index(None, nodes, "PRODUCT-1",
+                                links=ObsidianLinks(BASE, nodes.keys()), layout="flat")
+    assert "### [[PRODUCT-1]]: The epic" in out
+    assert "- [[MGD-2]] (Story) — Child" in out
+    assert "  - [[MGD-3]] (Sub-task) — Grandchild" in out
+
+
+def test_an_epic_with_no_children_says_so():
+    nodes = {"PRODUCT-1": FakeNode("PRODUCT-1", FakeIssue("PRODUCT-1", itype="Epic"), "root", [])}
+    out = generate_import_index(None, nodes, "PRODUCT-1",
+                                links=GithubLinks(BASE, nodes.keys()), layout="flat")
+    assert "_No children found in export._" in out
+
+
+def test_epic_link_custom_field_is_honoured_as_a_parent():
+    """Older issues carry the Epic Link in customfield_17801, not parent."""
+    nodes = epic_nodes()
+    nodes["MGD-2"].issue.fields.parent = None
+    nodes["MGD-2"].issue.fields.customfield_17801 = "PRODUCT-1"
+    out = generate_import_index(None, nodes, "PRODUCT-1",
+                                links=GithubLinks(BASE, nodes.keys()), layout="flat")
+    assert "- [MGD-2](MGD-2/MGD-2.md) (Story) — Child" in out

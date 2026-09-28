@@ -199,3 +199,29 @@ def test_obsidian_wikilinks_are_left_alone():
     at = obsidian().at(Location.ticket("MGD-2"))
     assert at.attachment("a]b.png") == "[[a]b.png]]"
     assert at.image("r[1].png") == "![[r[1].png]]"
+
+
+# --- human_size boundaries and the unknown-style guard -----------------------
+
+def test_human_size_boundaries():
+    from link_renderer import human_size
+    assert human_size(0) == "0 B"
+    assert human_size(1023) == "1023 B"
+    assert human_size(1024) == "1.0 KB"
+    assert human_size(1024 ** 2) == "1.0 MB"
+    assert human_size(1024 ** 3) == "1.0 GB"
+    # Nothing above GB, so a huge file stays readable rather than wrapping.
+    assert human_size(5 * 1024 ** 4) == "5120.0 GB"
+
+
+def test_a_zero_byte_attachment_shows_no_size():
+    at = github().at(Location.ticket("MGD-1"))
+    assert at.external_file("empty.log", "https://ex.net/1", 0) == (
+        "[empty.log](https://ex.net/1)"
+    )
+
+
+def test_unknown_style_is_rejected():
+    import pytest
+    with pytest.raises(ValueError, match="unknown link style"):
+        OutputProfile.for_style("markdown", BASE)

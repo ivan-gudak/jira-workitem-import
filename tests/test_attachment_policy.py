@@ -332,3 +332,13 @@ def test_rewriting_outside_code_still_happens_when_code_is_present(tmp_path):
     h = downloaded(tmp_path, **{"flow.png": "flow.png"})
     out = h.replace_attachment_references("`literal ![](flow.png)` but ![](flow.png) here")
     assert out == "`literal ![](flow.png)` but ![flow.png](attachments/flow.png) here"
+
+
+def test_uppercase_image_extensions_are_classified_as_images(tmp_path):
+    """_is_image lowercases the suffix; the listing must embed, not link."""
+    h = downloaded(tmp_path, **{"SHOT.PNG": "SHOT.PNG"})
+    md = h.get_attachment_list_markdown(["SHOT.PNG"], [])
+    assert "### Images" in md
+    assert "![SHOT.PNG](attachments/SHOT.PNG)" in md
+    assert AttachmentHandler._is_image("SHOT.PNG") is True
+    assert AttachmentHandler._is_image("notes.TXT") is False
