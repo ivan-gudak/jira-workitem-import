@@ -159,12 +159,16 @@ class MarkdownExporter:
         (item_dir / f"{key}.md").write_text(md, encoding="utf-8")
         print(f"  Written: {key}.md")
 
-        # Generate comments
-        comments_handler = CommentsHandler(JIRA_BASE_URL, att_handler)
-        comments_md = comments_handler.fetch_and_format_comments(issue)
-        comments_md = self.scrubber.scrub_text(comments_md)
-        (item_dir / f"{key}-comments.md").write_text(comments_md, encoding="utf-8")
-        print(f"  Written: {key}-comments.md")
+        # Under GitHub style the comments live inside <KEY>.md.
+        if not self.profile.inline_comments:
+            comments_handler = CommentsHandler(
+                JIRA_BASE_URL, att_handler,
+                links=self.profile.renderer.at(Location.ticket(key)),
+            )
+            comments_md = comments_handler.format_comments_document(issue)
+            comments_md = self.scrubber.scrub_text(comments_md)
+            (item_dir / f"{key}-comments.md").write_text(comments_md, encoding="utf-8")
+            print(f"  Written: {key}-comments.md")
 
     def _generate_markdown(self, issue: Any, node: IssueNode,
                            att_handler: AttachmentHandler,
@@ -300,10 +304,15 @@ class MarkdownExporter:
                     pr.author = self.scrubber.anonymize_name(pr.author) or pr.author
             lines.append(format_prs_markdown(prs))
 
-        # Comments (embedded via Obsidian transclusion)
+        # Comments: inlined for GitHub (no transclusion there), transcluded for Obsidian.
         lines.append("## Comments")
         lines.append("")
-        lines.append(f"![[{issue.key}-comments]]")
+        if self.profile.inline_comments:
+            handler = CommentsHandler(JIRA_BASE_URL, att_handler, links=at)
+            body = handler.format_comments_body(issue, level=3)
+            lines.append(self.scrubber.scrub_text(body))
+        else:
+            lines.append(f"![[{issue.key}-comments]]")
         lines.append("")
 
         return '\n'.join(lines)
