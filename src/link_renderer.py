@@ -108,7 +108,7 @@ class BaseLinks:
 
     def external_file(self, filename: str, url: str, size: Optional[int] = None) -> str:
         suffix = f" ({human_size(size)})" if size else ""
-        return f"[{filename}]({url}){suffix}"
+        return f"[{_link_text(filename)}]({_safe_url(url)}){suffix}"
 
     def prose_issue(self, key: str, location: Location) -> str:
         """A key mentioned in body text. Same as a structural link by default;
@@ -169,15 +169,36 @@ class GithubLinks(BaseLinks):
         return f"[{alias or name}]({_url_path(path)})"
 
     def image(self, filename: str, location: Location) -> str:
-        return f"![{filename}]({_url_path(f'attachments/{filename}')})"
+        return f"![{_link_text(filename)}]({_url_path(f'attachments/{filename}')})"
 
     def attachment(self, filename: str, location: Location) -> str:
-        return f"[{filename}]({_url_path(f'attachments/{filename}')})"
+        return f"[{_link_text(filename)}]({_url_path(f'attachments/{filename}')})"
 
 
 def _url_path(path: str) -> str:
     """Percent-encode a relative path so spaces and parens survive markdown."""
     return quote(path, safe="/._-")
+
+
+def _link_text(text: str) -> str:
+    """Escape what would terminate a markdown link label.
+
+    Only the destination was being encoded, so a filename containing a bracket
+    closed the label early: `a]b.png` rendered as `[a]b.png](...)`.
+    """
+    return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
+def _safe_url(url: str) -> str:
+    """Escape only what terminates a markdown link destination.
+
+    Deliberately not `quote()`: these URLs come from Jira already encoded, and
+    re-encoding would turn an existing %20 into %2520.
+    """
+    for char, code in ((" ", "%20"), ("(", "%28"), (")", "%29"),
+                       ("<", "%3C"), (">", "%3E")):
+        url = url.replace(char, code)
+    return url
 
 
 @dataclass(frozen=True)

@@ -14,13 +14,24 @@ from link_renderer import Location, ObsidianLinks
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.ico'}
 
 #: A leftover reference to an attachment that was never written and has no
-#: URL to fall back on. Requires a file extension, so markdown footnote
-#: syntax ([^1]) and bare [^note] are left alone.
-_NAME = r'[^\s\]\)/:]+\.[A-Za-z0-9]{1,10}'
+#: URL to fall back on. Requires a file extension containing at least one
+#: letter, so markdown footnotes are left alone -- both the bare forms ([^1],
+#: [^note]) and labelled ones whose suffix is numeric ([^RFC.2119]).
+_EXT = r'[A-Za-z0-9]{0,9}[A-Za-z][A-Za-z0-9]{0,9}'
+_NAME = rf'[^\s\]\)/:]+\.{_EXT}'
 UNRESOLVED_PATTERNS = (
     re.compile(rf'!\[\]\(({_NAME})\)'),      # Jira image, post-conversion
     re.compile(rf'(?<!\[)\[\^({_NAME})\]'),  # Jira attachment link
 )
+
+#: Fenced and inline code, captured so the unresolved sweep can skip it. A
+#: description quoting markdown must survive as written.
+CODE_SPANS = re.compile(r'(```.*?```|~~~.*?~~~|`[^`\n]+`)', re.DOTALL)
+
+
+def _unavailable(filename: str) -> str:
+    """The marker for an attachment with no file and no URL."""
+    return f"*(attachment unavailable: {filename})*"
 
 
 class AttachmentHandler:
@@ -140,24 +151,29 @@ class AttachmentHandler:
                 return token
             return substitute
 
+        # Both reference families apply to every file, whatever its type:
+        # Jira's [^name] link macro works for images, and !name! embeds are
+        # written for non-images. Matching only one family left the other
+        # form untouched, and the unresolved sweep below then declared a file
+        # missing that had in fact been written. What the file *is* decides
+        # the rendering, not which family matched: only an image can embed.
         for original, local in self.downloaded_files.items():
             f = re.escape(original)
-            if self._is_image(local):
-                repl = at.image(local)
-                patterns = self._image_patterns(f) + (rf'\)\]\({f}\)',)
-            else:
-                repl = at.attachment(local)
-                patterns = self._link_patterns(f) + (rf'(?<!\[\[)\^{f}(?!\]\])',)
-            for pat in patterns:
-                text = re.sub(pat, stash(repl), text)
+            embedded = at.image(local) if self._is_image(local) else at.attachment(local)
+            linked = at.attachment(local)
+            for pat in self._image_patterns(f) + (rf'\)\]\({f}\)',):
+                text = re.sub(pat, stash(embedded), text)
+            for pat in self._link_patterns(f) + (rf'(?<!\[\[)\^{f}(?!\]\])',):
+                text = re.sub(pat, stash(linked), text)
 
-        # Skipped or failed: never written, but we have the Jira URL. Image
-        # forms count too -- a failed image download leaves an ![](name)
+        # Skipped or failed: never written, but we usually have the Jira URL.
+        # Image forms count too -- a failed image download leaves an ![](name)
         # reference behind exactly like a missing file does.
         for filename, url, size in self.elsewhere:
             f = re.escape(filename)
-            repl = at.external_file(filename, url, size)
-            for pat in self._image_patterns(f) + self._link_patterns(f):
+            repl = self._elsewhere_markup(filename, url, size)
+            for pat in (self._image_patterns(f) + self._link_patterns(f)
+                        + (rf'(?<!\[\[)\^{f}(?!\]\])',)):
                 text = re.sub(pat, stash(repl), text)
 
         text = self._mark_unresolved(text)
@@ -170,17 +186,28 @@ class AttachmentHandler:
         """Attachments that stayed in Jira, whether by policy or by failure."""
         return self.skipped + self.failed
 
+    def _elsewhere_markup(self, filename: str, url: str, size: int) -> str:
+        """An attachment that stayed in Jira. Without a URL there is nothing
+        to link to, and an empty href points at the current page."""
+        if not url:
+            return _unavailable(filename)
+        return self.links.external_file(filename, url, size)
+
     @staticmethod
     def _mark_unresolved(text: str) -> str:
         """Flag references to attachments Jira did not return at all.
 
         They were deleted, or are not visible to this account, so there is no
         URL to link to. Left alone they render as a broken image in GitHub and
-        a dangling embed in Obsidian."""
-        for pattern in UNRESOLVED_PATTERNS:
-            text = pattern.sub(
-                lambda m: f"*(attachment unavailable: {m.group(1)})*", text)
-        return text
+        a dangling embed in Obsidian.
+
+        Code spans are skipped: a description quoting markdown is documenting
+        the syntax, not referencing an attachment."""
+        parts = CODE_SPANS.split(text)
+        for i in range(0, len(parts), 2):   # odd indices are the code spans
+            for pattern in UNRESOLVED_PATTERNS:
+                parts[i] = pattern.sub(lambda m: _unavailable(m.group(1)), parts[i])
+        return "".join(parts)
 
     def get_attachment_list_markdown(self, images: List[str], others: List[str]) -> str:
         if not images and not others and not self.elsewhere:
@@ -199,6 +226,6 @@ class AttachmentHandler:
             for f in others:
                 lines.append(f"- {at.attachment(f)}")
             for filename, url, size in self.elsewhere:
-                lines.append(f"- {at.external_file(filename, url, size)}")
+                lines.append(f"- {self._elsewhere_markup(filename, url, size)}")
             lines.append("")
         return '\n'.join(lines)
