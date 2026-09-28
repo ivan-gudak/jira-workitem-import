@@ -148,7 +148,11 @@ class MarkdownExporter:
         item_dir.mkdir(parents=True)
 
         attachments_dir = item_dir / "attachments"
-        att_handler = AttachmentHandler(self.jira, str(attachments_dir))
+        att_handler = AttachmentHandler(
+            self.jira, str(attachments_dir),
+            download_allowlist=self.profile.download_allowlist,
+            links=self.profile.renderer.at(Location.ticket(key)),
+        )
 
         # Download attachments
         print(f"  Downloading attachments...")
@@ -249,9 +253,12 @@ class MarkdownExporter:
                 lines.append(details)
                 lines.append("")
 
-        # Attachments
-        if images or others:
-            lines.append(att_handler.get_attachment_list_markdown(images, others))
+        # Attachments. The handler decides whether there is anything to show:
+        # a ticket whose attachments were all skipped has empty images/others
+        # but still lists them as sized Jira links.
+        attachments_md = att_handler.get_attachment_list_markdown(images, others)
+        if attachments_md:
+            lines.append(attachments_md)
 
         # Release notes
         relevant_for_rn = getattr(issue.fields, 'customfield_15900', None)

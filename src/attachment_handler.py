@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
+from link_renderer import Location, ObsidianLinks
+
 
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.ico'}
 
@@ -15,20 +17,40 @@ IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp', '.
 class AttachmentHandler:
     """Downloads and manages Jira attachments for a single export."""
 
-    def __init__(self, jira_client, attachments_dir: str):
+    def __init__(self, jira_client, attachments_dir: str, download_allowlist=None, links=None):
         self.jira_client = jira_client
         self.attachments_dir = Path(attachments_dir)
+        self.download_allowlist = download_allowlist
+        self.links = links if links is not None else ObsidianLinks("", ()).at(Location.ticket(""))
         self.downloaded_files: Dict[str, str] = {}  # original_name -> local_filename
+        self.skipped: List[Tuple[str, str, int]] = []  # (filename, url, size)
+
+    def _should_download(self, filename: str) -> bool:
+        """None means download everything (Obsidian). Otherwise allowlist by
+        extension; no extension means no match, so it is skipped."""
+        if self.download_allowlist is None:
+            return True
+        suffix = Path(filename).suffix.lower().lstrip(".")
+        return bool(suffix) and suffix in self.download_allowlist
 
     def download_attachments(self, issue) -> Tuple[List[str], List[str]]:
-        """Download all attachments. Returns (image_files, other_files)."""
+        """Download allowlisted attachments. Returns (image_files, other_files)."""
         if not hasattr(issue.fields, 'attachment') or not issue.fields.attachment:
             return [], []
 
-        self.attachments_dir.mkdir(parents=True, exist_ok=True)
         images, others = [], []
-
         for attachment in issue.fields.attachment:
+            if not self._should_download(attachment.filename):
+                self.skipped.append((
+                    attachment.filename,
+                    getattr(attachment, 'content', ''),
+                    getattr(attachment, 'size', 0),
+                ))
+                print(f"    Skipped (not downloaded): {attachment.filename}")
+                continue
+            # Created lazily so a ticket whose attachments are all skipped
+            # leaves no empty attachments/ directory behind.
+            self.attachments_dir.mkdir(parents=True, exist_ok=True)
             local = self._download(attachment)
             if local:
                 self.downloaded_files[attachment.filename] = local
@@ -61,52 +83,63 @@ class AttachmentHandler:
         return Path(filename).suffix.lower() in IMAGE_EXTENSIONS
 
     def replace_attachment_references(self, text: str) -> str:
-        """Replace Jira attachment references with Obsidian wikilinks."""
+        """Rewrite Jira attachment references through the bound renderer."""
         if not text:
             return text
+        at = self.links
         for original, local in self.downloaded_files.items():
+            escaped = re.escape(original)
             if self._is_image(local):
-                escaped = re.escape(original)
-                for pat, repl in [
-                    (rf'!\[\]\({escaped}[^\)]*\)', f'![[{local}]]'),
-                    (rf'!\[\]\(\[\]\({escaped}[^\)]*\)\)', f'![[{local}]]'),
-                    (rf'\)\]\({escaped}\)', f'![[{local}]]'),
-                    (rf'!{escaped}[^!]*!', f'![[{local}]]'),
-                ]:
-                    text = re.sub(pat, repl, text)
+                repl = at.image(local)
+                patterns = [
+                    rf'!\[\]\({escaped}[^\)]*\)',
+                    rf'!\[\]\(\[\]\({escaped}[^\)]*\)\)',
+                    rf'\)\]\({escaped}\)',
+                    rf'!{escaped}[^!]*!',
+                ]
             else:
-                escaped = re.escape(original)
+                repl = at.attachment(local)
                 escaped_caret = re.escape(f"^{original}")
-                for pat, repl in [
-                    (rf'(?<!\[)\[(\^{escaped}|{escaped})\]\((\^{escaped}|{escaped})\)', f'[[{local}]]'),
-                    (rf'(?<!\[)\[(\^{escaped}|{escaped})\]\([^)]+/{escaped}\)', f'[[{local}]]'),
-                    (rf'(?<!\[)\[(\^{escaped}|{escaped})\](?![\(\[])', f'[[{local}]]'),
-                    (rf'(?<!\[\[){escaped_caret}(?!\]\])', f'[[{local}]]'),
-                ]:
-                    text = re.sub(pat, repl, text)
+                patterns = [
+                    rf'(?<!\[)\[(\^{escaped}|{escaped})\]\((\^{escaped}|{escaped})\)',
+                    rf'(?<!\[)\[(\^{escaped}|{escaped})\]\([^)]+/{escaped}\)',
+                    rf'(?<!\[)\[(\^{escaped}|{escaped})\](?![\(\[])',
+                    rf'(?<!\[\[){escaped_caret}(?!\]\])',
+                ]
+            for pat in patterns:
+                # A lambda replacement, so a rendered link is inserted
+                # literally rather than read for backreferences.
+                text = re.sub(pat, lambda _m, r=repl: r, text)
+
+        # A skipped file was never written, so its reference points at Jira.
+        for filename, url, size in self.skipped:
+            escaped = re.escape(filename)
+            repl = at.external_file(filename, url, size)
+            for pat in (
+                rf'(?<!\[)\[(\^{escaped}|{escaped})\]\((\^{escaped}|{escaped})\)',
+                rf'(?<!\[)\[(\^{escaped}|{escaped})\]\([^)]+/{escaped}\)',
+                rf'(?<!\[)\[(\^{escaped}|{escaped})\](?![\(\[])',
+            ):
+                text = re.sub(pat, lambda _m, r=repl: r, text)
         return text
 
     def get_attachment_list_markdown(self, images: List[str], others: List[str]) -> str:
-        if not images and not others:
+        if not images and not others and not self.skipped:
             return ""
+        at = self.links
         lines = ["## Attachments", ""]
         if images:
             lines.append("### Images")
             lines.append("")
             for img in images:
-                lines.append(f"![[{img}]]")
+                lines.append(at.image(img))
                 lines.append("")
-        if others:
+        if others or self.skipped:
             lines.append("### Files")
             lines.append("")
             for f in others:
-                lines.append(f"- [[{f}]]")
+                lines.append(f"- {at.attachment(f)}")
+            for filename, url, size in self.skipped:
+                lines.append(f"- {at.external_file(filename, url, size)}")
             lines.append("")
         return '\n'.join(lines)
-
-    @staticmethod
-    def pipe_escape(wikilink: str) -> str:
-        """Escape pipe in wikilink for use inside markdown tables.
-        [[target|alias]] -> [[target\\|alias]]
-        """
-        return wikilink.replace("[[", "[[").replace("|", "\\|") if "|" in wikilink else wikilink
