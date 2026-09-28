@@ -1,11 +1,12 @@
 """
 Index generator module.
-Generates export-index.md with Obsidian wikilinks and pipe-escaped table cells.
+Generates export-index.md through a link renderer, with pipe-escaped table cells.
 """
 
 from pathlib import Path
 from graph_walker import IssueNode
 from config import JIRA_BASE_URL
+from link_renderer import Location, ObsidianLinks
 
 
 def _pipe_escape(text: str) -> str:
@@ -13,21 +14,27 @@ def _pipe_escape(text: str) -> str:
     return text.replace("|", "\\|")
 
 
-def _wikilink(key: str, nodes: dict[str, IssueNode]) -> str:
-    """[[KEY]] if in export, else Jira URL link."""
-    if key in nodes:
-        return f"[[{key}]]"
-    return f"[{key}]({JIRA_BASE_URL}/browse/{key})"
+def _bind(links, location: Location, keys=()):
+    """Bind a renderer to a location; default to Obsidian rendering."""
+    renderer = links if links is not None else ObsidianLinks(JIRA_BASE_URL, keys)
+    return renderer.at(location)
 
 
-def _wikilink_table(key: str, nodes: dict[str, IssueNode]) -> str:
-    """Wikilink safe for table cells (pipe-escaped)."""
-    return _pipe_escape(_wikilink(key, nodes))
+def _link_table(at, key: str) -> str:
+    """An issue link safe for a table cell."""
+    return at.table_cell(at.issue(key))
 
 
-def generate_import_index(data_dir: Path, nodes: dict[str, IssueNode], root_key: str) -> str:
+def generate_import_index(data_dir: Path, nodes: dict[str, IssueNode], root_key: str,
+                          links=None, layout: str = "nested") -> str:
     """Generate per-import index content (e.g., PRODUCT-12345-index.md)."""
-    lines = [f"# Export Index: {root_key}", "", "**Main Index:** [[export-index]]", ""]
+    at = _bind(links, Location.index(), nodes.keys())
+
+    lines = [f"# Export Index: {root_key}", ""]
+    # A flat destination holds one import and writes no export-index.md,
+    # so the registry backlink would point at a file that is never created.
+    if layout == "nested":
+        lines.extend([f"**Main Index:** {at.index('export-index')}", ""])
 
     # Summary table
     lines.append("## All Exported Work Items")
@@ -41,7 +48,7 @@ def generate_import_index(data_dir: Path, nodes: dict[str, IssueNode], root_key:
         itype = getattr(issue.fields.issuetype, 'name', '') if issue.fields.issuetype else ''
         status = getattr(issue.fields.status, 'name', '') if issue.fields.status else ''
         summary = _pipe_escape(getattr(issue.fields, 'summary', '') or '')
-        link = _wikilink_table(key, nodes)
+        link = _link_table(at, key)
         lines.append(f"| {link} | {itype} | {status} | {summary} | {node.role} |")
 
     lines.append("")
@@ -58,7 +65,7 @@ def generate_import_index(data_dir: Path, nodes: dict[str, IssueNode], root_key:
         lines.append("")
         for link_type, direction, target in node.links:
             arrow = "→" if direction == "outward" else "←"
-            target_link = _wikilink(target, nodes)
+            target_link = at.issue(target)
             lines.append(f"- {arrow} **{link_type}** {target_link}")
         lines.append("")
 
@@ -69,12 +76,12 @@ def generate_import_index(data_dir: Path, nodes: dict[str, IssueNode], root_key:
         lines.append("")
         for epic_key in epics:
             epic_summary = getattr(nodes[epic_key].issue.fields, 'summary', '')
-            lines.append(f"### [[{epic_key}]]: {epic_summary}")
+            lines.append(f"### {at.issue(epic_key)}: {epic_summary}")
             lines.append("")
             children = [k for k, n in nodes.items()
                         if n.role == "epic_child" and _parent_of(n.issue) == epic_key]
             if children:
-                _render_tree(lines, nodes, children, indent=0)
+                _render_tree(lines, nodes, children, indent=0, at=at)
             else:
                 lines.append("_No children found in export._")
             lines.append("")
@@ -115,8 +122,8 @@ def _parent_of(issue) -> str | None:
     return None
 
 
-def _render_tree(lines: list, nodes: dict[str, IssueNode], keys: list[str], indent: int) -> None:
-    """Render a tree of issues with indentation, using wikilinks."""
+def _render_tree(lines: list, nodes: dict[str, IssueNode], keys: list[str], indent: int, at) -> None:
+    """Render a tree of issues with indentation, through the bound renderer."""
     for key in sorted(keys):
         node = nodes.get(key)
         if not node:
@@ -124,15 +131,16 @@ def _render_tree(lines: list, nodes: dict[str, IssueNode], keys: list[str], inde
         prefix = "  " * indent + "- "
         summary = getattr(node.issue.fields, 'summary', '') or ''
         itype = getattr(node.issue.fields.issuetype, 'name', '') if node.issue.fields.issuetype else ''
-        lines.append(f"{prefix}[[{key}]] ({itype}) — {summary}")
+        lines.append(f"{prefix}{at.issue(key)} ({itype}) — {summary}")
         children = [k for k, n in nodes.items()
                     if k != key and _parent_of(n.issue) == key]
         if children:
-            _render_tree(lines, nodes, children, indent + 1)
+            _render_tree(lines, nodes, children, indent + 1, at)
 
 
-def update_top_level_index(data_dir: Path) -> None:
+def update_top_level_index(data_dir: Path, links=None) -> None:
     """Rewrite export-index.md listing all import subdirectories."""
+    at = _bind(links, Location.root())
     imports = []
     for subdir in sorted(data_dir.iterdir()):
         if not subdir.is_dir():
@@ -145,7 +153,8 @@ def update_top_level_index(data_dir: Path) -> None:
         summary, itype, status = "", "", ""
         index_file = index_files[0]
         for line in index_file.read_text(encoding="utf-8").splitlines():
-            if line.startswith("| [[") or line.startswith("| \\[\\["):
+            if (line.startswith("| [[") or line.startswith("| \\[\\[")
+                    or line.startswith("| [")):
                 parts = [p.strip() for p in line.split("|")]
                 # | link | type | status | summary | role |
                 if len(parts) >= 6 and "root" in parts[5].lower():
@@ -160,7 +169,8 @@ def update_top_level_index(data_dir: Path) -> None:
         lines.append("| Import | Type | Status | Summary |")
         lines.append("| --- | --- | --- | --- |")
         for root_key, itype, status, summary in imports:
-            lines.append(f"| [[{root_key}-index\\|{root_key}]] | {itype} | {status} | {summary} |")
+            link = at.table_cell(at.index(f"{root_key}-index", alias=root_key))
+            lines.append(f"| {link} | {itype} | {status} | {summary} |")
     else:
         lines.append("_No imports found._")
     lines.append("")

@@ -75,8 +75,8 @@ class _Bound:
     def prose_issue(self, key: str) -> str:
         return self._r.prose_issue(key, self._loc)
 
-    def index(self, name: str) -> str:
-        return self._r.index(name, self._loc)
+    def index(self, name: str, alias: str = "") -> str:
+        return self._r.index(name, self._loc, alias)
 
     def image(self, filename: str) -> str:
         return self._r.image(filename, self._loc)
@@ -135,8 +135,8 @@ class ObsidianLinks(BaseLinks):
         by another import — a Jira URL would throw that away."""
         return f"[[{key}]]"
 
-    def index(self, name: str, location: Location) -> str:
-        return f"[[{name}]]"
+    def index(self, name: str, location: Location, alias: str = "") -> str:
+        return f"[[{name}|{alias}]]" if alias else f"[[{name}]]"
 
     def image(self, filename: str, location: Location) -> str:
         return f"![[{filename}]]"
@@ -159,7 +159,7 @@ class GithubLinks(BaseLinks):
             path = f"{key}/{key}.md"
         return f"[{key}]({_url_path(path)})"
 
-    def index(self, name: str, location: Location) -> str:
+    def index(self, name: str, location: Location, alias: str = "") -> str:
         if location.kind == "root":
             # export-index.md -> <ID>/<ID>-index.md
             stem = name[: -len("-index")] if name.endswith("-index") else name
@@ -167,7 +167,7 @@ class GithubLinks(BaseLinks):
         else:
             # A ticket page or the per-import index links one level up.
             path = f"../{name}.md"
-        return f"[{name}]({_url_path(path)})"
+        return f"[{alias or name}]({_url_path(path)})"
 
     def image(self, filename: str, location: Location) -> str:
         return f"![{filename}]({_url_path(f'attachments/{filename}')})"

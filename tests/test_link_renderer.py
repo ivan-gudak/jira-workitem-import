@@ -149,3 +149,17 @@ def test_github_profile_defaults():
     assert profile.inline_comments is True
     assert "png" in profile.download_allowlist
     assert "zip" not in profile.download_allowlist
+
+
+# --- Aliased index links (the registry's "<ID>-index shown as <ID>" rows) ----
+
+def test_obsidian_index_alias_uses_wikilink_alias_syntax():
+    at = obsidian().at(Location.root())
+    assert at.index("PRODUCT-1-index", alias="PRODUCT-1") == "[[PRODUCT-1-index|PRODUCT-1]]"
+
+
+def test_github_index_alias_becomes_the_link_text():
+    at = github().at(Location.root())
+    assert at.index("PRODUCT-1-index", alias="PRODUCT-1") == (
+        "[PRODUCT-1](PRODUCT-1/PRODUCT-1-index.md)"
+    )
