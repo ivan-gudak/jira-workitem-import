@@ -14,6 +14,9 @@ _EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}')
 _MENTION_JIRA_RE = re.compile(r'\[~(?:accountid:)?[^\]]+\]')
 _MENTION_AT_RE = re.compile(r'@([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+)+)')
 
+# Matches every placeholder scrub_text leaves behind
+PLACEHOLDER_RE = re.compile(r'@?\bUser-\d+\b|\[email\]|\[mention\]')
+
 
 class PiiScrubber:
     """Builds a consistent name→User-N mapping and scrubs text."""

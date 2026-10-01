@@ -61,14 +61,28 @@ before contacting Jira.
 | # | Given | Destination | Layout | Links |
 |---|-------|-------------|--------|-------|
 | 1 | `--export-dir=<path>` | `<path>` | nested | obsidian |
-| 2 | `SPECS_PATH=<repo>` | `<repo>/specifications/<ID>-<slug>/jira-import` | flat | github |
+| 2 | `SPECS_PATH=<repo>` | `<repo>/<specifications\|ideas>/<ID>-<slug>/jira-import` | flat | github |
 | 3 | `VAULT_PATH=<vault>` | `<vault>/jira-products` | nested | obsidian |
 | 4 | none of the above | *error* | — | — |
 
-An environment variable set to the empty string counts as unset. Under rule 2
-the `<ID>-<slug>` directory is matched case-insensitively; if none exists a
-bare `<ID>` directory is used, and if several match the run stops and asks you
-to pick one with `--export-dir`.
+An environment variable set to the empty string counts as unset.
+
+Under rule 2, `PRODFB-` keys go to `ideas/` and every other key goes to
+`specifications/`. The specs repo is used only when `SPECS_PATH` exists, the
+target subfolder exists in it, and it is the root of a git repository (a `.git`
+directory, or a `.git` file in a worktree). If any check fails, the run prints
+a `Note:` with the reason and falls back to rule 3; with no usable `VAULT_PATH`
+either, it stops with both reasons.
+
+The `<ID>-<slug>` folder is matched case-insensitively, and an existing `<ID>`
+or `<ID>-*` folder is used as it is, never renamed. If several match, the run
+stops and asks you to pick one with `--export-dir`. If none exists, a new
+folder is named from the root ticket's summary: people's names, emails and
+mentions are scrubbed out, the rest is lowercased to ASCII letters, digits and
+hyphens, and cut to at most 40 characters at a word boundary. *Export a
+distributed trace* becomes `PRODUCT-14279-export-a-distributed-trace`. A
+summary with nothing left after that gives a bare `<ID>` folder. Company names
+are not scrubbed and stay in the slug.
 
 `--link-style=obsidian|github` overrides the inferred link style.
 
