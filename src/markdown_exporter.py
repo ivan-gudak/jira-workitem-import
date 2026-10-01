@@ -51,6 +51,20 @@ def register_people(nodes: dict[str, IssueNode], scrubber: PiiScrubber,
                     scrubber.anonymize_name(item.displayName)
 
 
+def scrub_summaries(nodes: dict[str, IssueNode], scrubber: PiiScrubber) -> None:
+    """Replace every ticket's summary with its scrubbed text, in place.
+
+    The summary is written by the page title, the frontmatter, every index and
+    the folder slug. Scrubbing it once, where it enters, covers all of them,
+    including writers added later. Run register_people first, or names the
+    scrubber has not met yet go through untouched.
+    """
+    for node in nodes.values():
+        summary = getattr(node.issue.fields, 'summary', None)
+        if isinstance(summary, str):
+            node.issue.fields.summary = scrubber.scrub_text(summary)
+
+
 class MarkdownExporter:
     """Exports workitems to markdown with PII scrubbing and profile-driven links."""
 

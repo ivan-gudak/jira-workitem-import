@@ -218,6 +218,10 @@ was never written.
 - Person names → consistent `User-N` placeholders across the entire export
 - Email addresses → `[email]`
 - `@mentions` and `[~user]` references → anonymized
+- Ticket summaries → scrubbed the same way wherever they appear: page titles,
+  frontmatter, indexes, and the slug of a new specs folder. A name is replaced
+  only when it belongs to a person on the exported tickets or is written as an
+  `@Name Surname` mention
 - Team names, project names, ticket IDs → **kept as-is** (not PII)
 
 ## Re-exporting
