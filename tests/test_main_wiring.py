@@ -320,3 +320,66 @@ def test_failing_to_create_the_import_dir_exits_1_with_the_path(run_main, monkey
     out = capsys.readouterr().out
     assert "Error: cannot create" in out
     assert "PRODFB-5-dark-mode" in out
+
+
+# --- Summaries are scrubbed wherever they are written ------------------------
+
+def two_ticket_walker():
+    """Root assigned to Jane Doe; a linked ticket naming her and an email."""
+    class Walker:
+        def __init__(self, client):
+            pass
+
+        def walk(self, jira_id):
+            root = FakeIssue(jira_id, "Epic")
+            root.fields.summary = "Jane Doe wants dark mode"
+            root.fields.assignee = FakeUser("Jane Doe")
+            linked = FakeIssue("MGD-2")
+            linked.fields.summary = "Ask Jane Doe (jane@example.com) about themes"
+            return {
+                jira_id: FakeNode(jira_id, root, "root"),
+                "MGD-2": FakeNode("MGD-2", linked, "linked"),
+            }
+    return Walker
+
+
+def test_summaries_reach_the_exporter_scrubbed(run_main, monkeypatch, tmp_path):
+    monkeypatch.setattr(main_module, "GraphWalker", two_ticket_walker())
+    seen = run_main(["PRODFB-5"], {"VAULT_PATH": str(make_vault(tmp_path))})
+    summaries = {k: n.issue.fields.summary for k, n in seen["nodes"].items()}
+    assert summaries == {
+        "PRODFB-5": "User-1 wants dark mode",
+        "MGD-2": "Ask User-1 ([email]) about themes",
+    }
+
+
+def test_index_carries_no_names_from_summaries(run_main, monkeypatch, tmp_path):
+    monkeypatch.setattr(main_module, "GraphWalker", two_ticket_walker())
+    vault = make_vault(tmp_path)
+    run_main(["PRODFB-5"], {"VAULT_PATH": str(vault)})
+    import_dir = vault / "jira-products" / "PRODFB-5"
+    index = (import_dir / "PRODFB-5-index.md").read_text(encoding="utf-8")
+    registry = (vault / "jira-products" / "export-index.md").read_text(encoding="utf-8")
+    for text in (index, registry):
+        assert "Jane Doe" not in text
+        assert "jane@example.com" not in text
+    assert "User-1 wants dark mode" in index
+    assert "Ask User-1 ([email]) about themes" in index
+
+
+def test_ticket_pages_carry_no_names_from_summaries(run_main, monkeypatch, tmp_path):
+    """Run the real exporter: the title and frontmatter read the summary."""
+    import markdown_exporter
+    monkeypatch.setattr(main_module, "GraphWalker", two_ticket_walker())
+    monkeypatch.setattr(main_module, "MarkdownExporter", markdown_exporter.MarkdownExporter)
+    monkeypatch.setattr(markdown_exporter, "fetch_pull_requests", lambda *a, **k: [])
+    vault = make_vault(tmp_path)
+    run_main(["PRODFB-5"], {"VAULT_PATH": str(vault)})
+    import_dir = vault / "jira-products" / "PRODFB-5"
+    root_page = (import_dir / "PRODFB-5" / "PRODFB-5.md").read_text(encoding="utf-8")
+    linked_page = (import_dir / "MGD-2" / "MGD-2.md").read_text(encoding="utf-8")
+    assert "# PRODFB-5: User-1 wants dark mode" in root_page
+    assert "# MGD-2: Ask User-1 ([email]) about themes" in linked_page
+    for page in (root_page, linked_page):
+        assert "Jane Doe" not in page
+        assert "jane@example.com" not in page

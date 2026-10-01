@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from jira_auth import JiraAuth
 from graph_walker import GraphWalker
-from markdown_exporter import MarkdownExporter, register_people
+from markdown_exporter import MarkdownExporter, register_people, scrub_summaries
 from index_generator import generate_import_index, update_top_level_index
 from pii_scrubber import PiiScrubber
 from export_paths import ExportPathError, resolve_export_target, slugify
@@ -90,14 +90,14 @@ def main():
         print("No issues found. Nothing to export.")
         sys.exit(0)
 
-    # People are registered before the summary is slugged, so their names are
-    # scrubbed out of the folder name as well as out of the files.
+    # Summaries are scrubbed before anything is written or slugged, and people
+    # are registered first so the scrubber knows their names.
     scrubber = PiiScrubber()
     register_people(nodes, scrubber, field_names)
+    scrub_summaries(nodes, scrubber)
     if target.pending_name:
         root = next(n for n in nodes.values() if n.role == "root")
-        summary = getattr(root.issue.fields, "summary", "") or ""
-        target = target.named(slugify(scrubber.scrub_text(summary)))
+        target = target.named(slugify(getattr(root.issue.fields, "summary", "") or ""))
 
     # Created after the graph walk succeeds, so a mistyped ID leaves nothing behind.
     data_dir = target.data_dir
