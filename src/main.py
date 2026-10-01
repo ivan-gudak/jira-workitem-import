@@ -12,10 +12,10 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 from jira_auth import JiraAuth
 from graph_walker import GraphWalker
-from markdown_exporter import MarkdownExporter
+from markdown_exporter import MarkdownExporter, register_people
 from index_generator import generate_import_index, update_top_level_index
 from pii_scrubber import PiiScrubber
-from export_paths import ExportPathError, resolve_export_target
+from export_paths import ExportPathError, resolve_export_target, slugify
 from link_renderer import OutputProfile
 from config import JIRA_BASE_URL
 
@@ -47,14 +47,19 @@ def main():
         print(f"Error: {e}")
         sys.exit(1)
 
-    # Created after the graph walk succeeds, so a mistyped ID leaves nothing behind.
-    data_dir = target.data_dir
+    if target.notice:
+        print(f"Note: {target.notice} Falling back to VAULT_PATH.")
 
     style = args.link_style or ("github" if target.origin == "specs" else "obsidian")
     profile = OutputProfile.for_style(style, JIRA_BASE_URL)
 
     print("=" * 50)
-    print(f"Destination: {data_dir}")
+    if target.pending_name:
+        feature_dir = target.data_dir.parent
+        shown = feature_dir.with_name(f"{feature_dir.name}-<slug>") / target.data_dir.name
+        print(f"Destination: {shown}  (new folder, named from the ticket summary)")
+    else:
+        print(f"Destination: {target.data_dir}")
     print(f"Source:      {target.origin}    Layout: {target.layout}    Links: {style}")
     print("=" * 50)
 
@@ -85,16 +90,31 @@ def main():
         print("No issues found. Nothing to export.")
         sys.exit(0)
 
+    # People are registered before the summary is slugged, so their names are
+    # scrubbed out of the folder name as well as out of the files.
+    scrubber = PiiScrubber()
+    register_people(nodes, scrubber, field_names)
+    if target.pending_name:
+        root = next(n for n in nodes.values() if n.role == "root")
+        summary = getattr(root.issue.fields, "summary", "") or ""
+        target = target.named(slugify(scrubber.scrub_text(summary)))
+
+    # Created after the graph walk succeeds, so a mistyped ID leaves nothing behind.
+    data_dir = target.data_dir
+
     # Flat layout: the destination is already import-specific, so no <ID> level.
     import_dir = data_dir if target.layout == "flat" else data_dir / args.jira_id
-    import_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        import_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"Error: cannot create {import_dir}: {e}")
+        sys.exit(1)
 
     print()
     print("=" * 50)
     print(f"Exporting {len(nodes)} issues to: {import_dir}")
     print("=" * 50)
 
-    scrubber = PiiScrubber()
     exporter = MarkdownExporter(jira_client, import_dir, scrubber, root_key=args.jira_id,
                                 field_names=field_names, profile=profile)
     success, failed = exporter.export_all(nodes)

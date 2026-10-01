@@ -20,6 +20,37 @@ from pr_fetcher import fetch_pull_requests, format_prs_markdown
 from graph_walker import IssueNode
 
 
+def register_people(nodes: dict[str, IssueNode], scrubber: PiiScrubber,
+                    field_names: dict) -> None:
+    """Pre-register every person on the tickets, so scrub_text can replace
+    their names and User-N numbering stays consistent. Safe to call twice:
+    a known name keeps its number."""
+    for node in nodes.values():
+        issue = node.issue
+        for field_id in ("assignee", "reporter", "customfield_21107", "customfield_19400"):
+            user = getattr(issue.fields, field_id, None)
+            if user and hasattr(user, 'displayName'):
+                scrubber.anonymize_name(user.displayName)
+
+        comments = getattr(issue.fields, 'comment', None)
+        if comments and hasattr(comments, 'comments'):
+            for c in comments.comments:
+                if hasattr(c, 'author') and hasattr(c.author, 'displayName'):
+                    scrubber.anonymize_name(c.author.displayName)
+
+        # Register people referenced in any custom field, for consistent User-N numbering
+        for field_id in field_names:
+            if not field_id.startswith('customfield_'):
+                continue
+            val = getattr(issue.fields, field_id, None)
+            if val is None:
+                continue
+            items = val if isinstance(val, list) else [val]
+            for item in items:
+                if hasattr(item, 'displayName'):
+                    scrubber.anonymize_name(item.displayName)
+
+
 class MarkdownExporter:
     """Exports workitems to markdown with PII scrubbing and profile-driven links."""
 
@@ -95,8 +126,7 @@ class MarkdownExporter:
     def export_all(self, nodes: dict[str, IssueNode]) -> tuple[int, list[tuple[str, str]]]:
         """Export all nodes. Returns (success_count, [(key, error), ...])."""
         # First pass: register all user names for consistent PII mapping
-        for node in nodes.values():
-            self._register_users(node.issue)
+        register_people(nodes, self.scrubber, self.field_names)
 
         self.profile.renderer.keys = set(nodes.keys())
 
@@ -110,31 +140,6 @@ class MarkdownExporter:
                 print(f"  ERROR: {e}")
                 failed.append((key, str(e)))
         return success, failed
-
-    def _register_users(self, issue: Any) -> None:
-        """Pre-register all user displayNames for consistent anonymization."""
-        for field_id in ("assignee", "reporter", "customfield_21107", "customfield_19400"):
-            user = getattr(issue.fields, field_id, None)
-            if user and hasattr(user, 'displayName'):
-                self.scrubber.anonymize_name(user.displayName)
-
-        comments = getattr(issue.fields, 'comment', None)
-        if comments and hasattr(comments, 'comments'):
-            for c in comments.comments:
-                if hasattr(c, 'author') and hasattr(c.author, 'displayName'):
-                    self.scrubber.anonymize_name(c.author.displayName)
-
-        # Register people referenced in any custom field, for consistent User-N numbering
-        for field_id in self.field_names:
-            if not field_id.startswith('customfield_'):
-                continue
-            val = getattr(issue.fields, field_id, None)
-            if val is None:
-                continue
-            items = val if isinstance(val, list) else [val]
-            for item in items:
-                if hasattr(item, 'displayName'):
-                    self.scrubber.anonymize_name(item.displayName)
 
     def _export_one(self, node: IssueNode, all_nodes: dict[str, IssueNode]) -> None:
         """Export a single workitem."""
