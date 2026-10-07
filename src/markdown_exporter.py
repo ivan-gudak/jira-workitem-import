@@ -5,6 +5,7 @@ Links are rendered through an OutputProfile. Each file links back to the index.
 """
 
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -375,6 +376,9 @@ class MarkdownExporter:
                 if field_id in ("assignee", "reporter", "customfield_21107", "customfield_19400"):
                     value = self.scrubber.anonymize_name(value) if isinstance(value, str) else value
                 lines.append(f"{yaml_key}: {self._yaml_val(value)}")
+        updated = getattr(issue.fields, "updated", None)
+        if isinstance(updated, str) and updated:
+            lines.append(f"updated: {self._yaml_val(self._utc_iso(updated))}")
         lines.append("---")
         lines.append("")
         return "\n".join(lines)
@@ -414,3 +418,12 @@ class MarkdownExporter:
             items = [f'"{i}"' if isinstance(i, str) else str(i) for i in value]
             return f"[{', '.join(items)}]"
         return f'"{str(value).replace(chr(34), chr(92)+chr(34)).replace(chr(10), " ")}"'
+
+    @staticmethod
+    def _utc_iso(stamp: str) -> str:
+        """Jira's updated timestamp in UTC, so two imports compare as text."""
+        try:
+            moment = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        except ValueError:
+            return stamp
+        return moment.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")

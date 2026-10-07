@@ -6,6 +6,7 @@ Exports a single Jira workitem and its full dependency graph to markdown.
 import argparse
 import os
 import sys
+from datetime import datetime, timezone
 
 # Add src directory to path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -122,7 +123,8 @@ def main():
     # Generate per-import index
     profile.renderer.keys = set(nodes.keys())
     index_content = generate_import_index(import_dir, nodes, args.jira_id,
-                                          links=profile.renderer, layout=target.layout)
+                                          links=profile.renderer, layout=target.layout,
+                                          imported_at=datetime.now(timezone.utc))
     index_path = import_dir / f"{args.jira_id}-index.md"
     index_path.write_text(index_content, encoding="utf-8")
     print(f"\nImport index: {index_path}")
