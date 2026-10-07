@@ -146,6 +146,7 @@ A simple table listing all root imported tickets, linked to their per-import ind
 ### PRODUCT-12345-index.md (per-import)
 
 Contains:
+- **Import time** — `**Imported:** <UTC time>` under the title, so a reader can tell how old the import is without trusting a file's modification time (git resets it at checkout)
 - **Backlink** to the registry (nested layouts only — a flat destination writes no registry, so the backlink is omitted)
 - **Summary table** — all exported issues with type, status, summary, and role (root/linked/epic_child)
 - **Relationship map** — link types between issues with directional arrows
@@ -156,7 +157,7 @@ Contains:
 
 Each `<KEY>.md` includes:
 - Backlink to the per-import index for navigation
-- YAML frontmatter (all Jira fields)
+- YAML frontmatter (all Jira fields), ending with `updated:` — Jira's last-change time for the ticket, in UTC, so a reader can tell whether Jira changed since the import
 - Metadata section (type, status, assignee, team, parent)
 - Status details and description (converted from Jira markup)
 - Attachments (embedded images, plus a file list)

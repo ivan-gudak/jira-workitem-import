@@ -3,6 +3,7 @@ Index generator module.
 Generates export-index.md through a link renderer, with pipe-escaped table cells.
 """
 
+from datetime import timezone
 from pathlib import Path
 from graph_walker import IssueNode
 from config import JIRA_BASE_URL
@@ -26,11 +27,18 @@ def _link_table(at, key: str) -> str:
 
 
 def generate_import_index(data_dir: Path, nodes: dict[str, IssueNode], root_key: str,
-                          links=None, layout: str = "nested") -> str:
-    """Generate per-import index content (e.g., PRODUCT-12345-index.md)."""
+                          links=None, layout: str = "nested", imported_at=None) -> str:
+    """Generate per-import index content (e.g., PRODUCT-12345-index.md).
+
+    imported_at, a timezone-aware datetime, is written under the title so a
+    reader can tell how old the import is without trusting a file time.
+    """
     at = _bind(links, Location.index(), nodes.keys())
 
     lines = [f"# Export Index: {root_key}", ""]
+    if imported_at is not None:
+        stamp = imported_at.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        lines.extend([f"**Imported:** {stamp}", ""])
     # A flat destination holds one import and writes no export-index.md,
     # so the registry backlink would point at a file that is never created.
     if layout == "nested":

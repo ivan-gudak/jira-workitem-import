@@ -5,6 +5,7 @@ entry point is exercised here with Jira, the graph walk, and the exporter
 replaced — no network, no real export.
 """
 
+import re
 import sys
 from dataclasses import dataclass, field
 from typing import Any
@@ -172,6 +173,14 @@ def test_flat_layout_exports_straight_into_the_destination(run_main, tmp_path):
     expected = specs / "specifications" / "PRODUCT-1-slug" / "jira-import"
     assert seen["import_dir"] == expected
     assert (expected / "PRODUCT-1-index.md").is_file()
+
+
+def test_the_written_index_records_the_import_time(run_main, tmp_path):
+    specs = make_specs(tmp_path, "PRODUCT-1-slug")
+    run_main(["PRODUCT-1"], {"SPECS_PATH": str(specs)})
+    index = specs / "specifications" / "PRODUCT-1-slug" / "jira-import" / "PRODUCT-1-index.md"
+    assert re.search(r"^\*\*Imported:\*\* \d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$",
+                     index.read_text(encoding="utf-8"), re.M)
 
 
 def test_nested_layout_adds_an_id_level(run_main, tmp_path):
