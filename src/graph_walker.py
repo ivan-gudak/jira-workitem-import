@@ -6,6 +6,8 @@ Traverses Jira issue links and Epic hierarchies to collect the full workitem gra
 from dataclasses import dataclass, field
 from typing import Any
 
+from jira_auth import describe
+
 
 @dataclass
 class IssueNode:
@@ -34,7 +36,8 @@ class GraphWalker:
         root = self._fetch_issue(root_key)
         if not root:
             raise ValueError(f"Could not fetch issue {root_key}")
-        self._add_node(root_key, root, "root")
+        # Keyed as Jira spells it: links from other issues use that spelling.
+        self._add_node(root.key, root, "root")
 
         # Step 2: direct links of root (1 level, all link types)
         print(f"[2/3] Fetching directly linked issues...")
@@ -66,7 +69,7 @@ class GraphWalker:
             print(f"  Fetched: {issue.key} - {issue.fields.summary}")
             return issue
         except Exception as e:
-            print(f"  Warning: Could not fetch {key}: {e}")
+            print(f"  Warning: Could not fetch {key}: {describe(e)}")
             return None
 
     def _add_node(self, key: str, issue: Any, role: str) -> IssueNode:
@@ -113,7 +116,7 @@ class GraphWalker:
         except Exception as e:
             # Jira rejects the whole query when one field is unknown to the
             # site, so ask clause by clause and keep what the site can answer.
-            print(f"  Warning: Epic query failed ({e}); retrying one clause at a time")
+            print(f"  Warning: Epic query failed ({describe(e)}); retrying one clause at a time")
             children = [c for clause in clauses for c in self._search_jql_safe(clause)]
 
         for child in children:
@@ -124,8 +127,7 @@ class GraphWalker:
 
     def _fetch_subtasks(self, parent_key: str) -> None:
         """Recursively fetch sub-tasks (children) of a given issue."""
-        jql = f'parent = {parent_key}'
-        children = self._search_jql(jql)
+        children = self._search_jql_safe(f'parent = {parent_key}')
 
         for child in children:
             if child.key not in self.nodes:
@@ -137,19 +139,14 @@ class GraphWalker:
         try:
             return self._search_jql(jql)
         except Exception as e:
-            print(f"  Warning: JQL query failed ({jql[:80]}): {e}")
+            print(f"  Warning: JQL query failed ({jql[:80]}): {describe(e)}")
             return []
 
     def _search_jql(self, jql: str) -> list:
-        """Run a JQL search and return all results."""
-        results = []
-        start = 0
-        while True:
-            batch = self.jira.search_issues(jql, fields="*all", startAt=start, maxResults=50)
-            if not batch:
-                break
-            results.extend(batch)
-            if len(results) >= batch.total:
-                break
-            start += len(batch)
-        return results
+        """Run a JQL search and return every result.
+
+        maxResults=False makes the client fetch every page. Paging by hand on
+        `total` stops after the first page on Jira Cloud, whose search API
+        reports the page's own length as the total (seen live: 50 of 196).
+        """
+        return list(self.jira.search_issues(jql, fields="*all", maxResults=False))

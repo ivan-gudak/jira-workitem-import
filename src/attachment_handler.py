@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import List, Dict, Tuple, Optional
 
+from jira_auth import describe
 from link_renderer import Location, ObsidianLinks
 
 
@@ -28,6 +29,15 @@ UNRESOLVED_PATTERNS = (
 #: description quoting attachment syntax is documenting it, not referring to
 #: an attachment, and must survive as written.
 CODE_SPANS = re.compile(r'(```.*?```|~~~.*?~~~|`[^`\n]+`)', re.DOTALL)
+
+
+def _local_name(filename: str) -> str:
+    """A Jira attachment name as a file name in this folder, never a path.
+
+    The name comes from whoever attached the file: "../x" or "/abs/x" must not
+    write outside the export."""
+    name = Path(filename.replace("\\", "/")).name
+    return name if name not in ("", ".", "..") else "attachment"
 
 
 def _unavailable(filename: str) -> str:
@@ -91,12 +101,12 @@ class AttachmentHandler:
     def _download(self, attachment) -> Optional[str]:
         try:
             content = attachment.get()
-            filename = self._unique_filename(attachment.filename)
+            filename = self._unique_filename(_local_name(attachment.filename))
             (self.attachments_dir / filename).write_bytes(content)
             print(f"    Downloaded: {filename}")
             return filename
         except Exception as e:
-            print(f"    Warning: Failed to download {attachment.filename}: {e}")
+            print(f"    Warning: Failed to download {attachment.filename}: {describe(e)}")
             return None
 
     def _unique_filename(self, filename: str) -> str:

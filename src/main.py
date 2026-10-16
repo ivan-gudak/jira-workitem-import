@@ -90,6 +90,9 @@ def main():
     if not nodes:
         print("No issues found. Nothing to export.")
         sys.exit(0)
+    # The ID as Jira spells it: `main.py product-1` still writes PRODUCT-1.
+    root = next(n for n in nodes.values() if n.role == "root")
+    jira_id = root.key
 
     # Summaries are scrubbed before anything is written or slugged, and people
     # are registered first so the scrubber knows their names.
@@ -97,14 +100,13 @@ def main():
     register_people(nodes, scrubber, field_names)
     scrub_summaries(nodes, scrubber)
     if target.pending_name:
-        root = next(n for n in nodes.values() if n.role == "root")
-        target = target.named(slugify(getattr(root.issue.fields, "summary", "") or ""))
+        target = target.named(slugify(getattr(root.issue.fields, "summary", "") or ""), jira_id)
 
     # Created after the graph walk succeeds, so a mistyped ID leaves nothing behind.
     data_dir = target.data_dir
 
     # Flat layout: the destination is already import-specific, so no <ID> level.
-    import_dir = data_dir if target.layout == "flat" else data_dir / args.jira_id
+    import_dir = data_dir if target.layout == "flat" else data_dir / jira_id
     try:
         import_dir.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -116,16 +118,16 @@ def main():
     print(f"Exporting {len(nodes)} issues to: {import_dir}")
     print("=" * 50)
 
-    exporter = MarkdownExporter(jira_client, import_dir, scrubber, root_key=args.jira_id,
+    exporter = MarkdownExporter(jira_client, import_dir, scrubber, root_key=jira_id,
                                 field_names=field_names, profile=profile)
     success, failed = exporter.export_all(nodes)
 
     # Generate per-import index
     profile.renderer.keys = set(nodes.keys())
-    index_content = generate_import_index(import_dir, nodes, args.jira_id,
+    index_content = generate_import_index(import_dir, nodes, jira_id,
                                           links=profile.renderer, layout=target.layout,
                                           imported_at=datetime.now(timezone.utc))
-    index_path = import_dir / f"{args.jira_id}-index.md"
+    index_path = import_dir / f"{jira_id}-index.md"
     index_path.write_text(index_content, encoding="utf-8")
     print(f"\nImport index: {index_path}")
 

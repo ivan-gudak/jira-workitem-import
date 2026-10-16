@@ -5,6 +5,20 @@ Reads .jira.config from the current working directory (project root).
 
 import os
 from jira import JIRA
+from jira.exceptions import JIRAError
+
+
+def describe(error: Exception) -> str:
+    """An error as one line: Jira's status and message.
+
+    Never str(JIRAError): that includes the response headers, session cookie
+    included, and they would end up in the console and in logs."""
+    if isinstance(error, JIRAError):
+        text = " ".join((error.text or "").split())
+        if error.status_code:
+            return f"HTTP {error.status_code}: {text}" if text else f"HTTP {error.status_code}"
+        return text or "Jira error"
+    return str(error)
 
 
 class JiraAuth:
