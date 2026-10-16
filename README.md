@@ -2,13 +2,18 @@
 
 Exports a single Jira workitem and its full dependency graph to markdown — including direct links, Epic children (recursively), comments, attachments, and pull request info. All person names and emails are anonymized.
 
+The work is done by [jiramd](https://github.com/ihudak/jiramd), the open-source
+exporter this tool became. This repository keeps the Dynatrace side: the
+settings in `jiramd.toml`, `runme.sh`, and `src/main.py`, which keeps this
+tool's command line and credentials file.
+
 **Use case:** You close a PRODUCT-XXXXX feature ticket and need to write release notes, documentation, or a blog post. This tool exports the full context — the PRODUCT ticket, linked Epics, all stories/bugs/tasks under those Epics, comments, and PR references — so you can write accurate docs even when the implementation diverged from the original plan.
 
 ## Requirements
 
-- Python 3.10 or later
+- Python 3.11 or later
 - A Jira Cloud account with read access to the tickets, and an API token for it
-- The Jira site this copy is configured for — see [Settings tied to one Jira site](#settings-tied-to-one-jira-site)
+- Network access to GitHub the first time, to install jiramd
 
 ## Setup
 
@@ -17,7 +22,7 @@ Exports a single Jira workitem and its full dependency graph to markdown — inc
 python3 -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 
-# 2. Install dependencies
+# 2. Install dependencies (jiramd, pinned in requirements.txt)
 pip install -r requirements.txt
 
 # 3. Create your config
@@ -49,8 +54,9 @@ Alternatively, set environment variables `JIRA_SERVER`, `JIRA_EMAIL`, `JIRA_TOKE
 ```
 
 Extra arguments are forwarded, so `./runme.sh PRODUCT-12345 --link-style=github` works.
-The script runs `python3 -m venv`, so it needs a `python3` (3.10+) on your `PATH`.
-It rebuilds `.venv` when the interpreter in it does not run on this machine.
+The script runs `python3 -m venv`, so it needs a `python3` (3.11+) on your `PATH`.
+It rebuilds `.venv` when the interpreter in it does not run on this machine, and
+installs jiramd when the installed version is not the one `requirements.txt` pins.
 
 Alternatively, invoke Python directly after activating the venv. Run it from the
 project root, where `.jira.config` is read:
@@ -64,9 +70,10 @@ VAULT_PATH=/path/to/obsidian-vault python src/main.py PRODUCT-12345
 
 ### Where the export goes
 
-The destination is resolved from the first rule that applies. There is no
-default — with none of these set the run stops immediately with an error,
-before contacting Jira.
+The destination is resolved from the first rule that applies (rules 2 and 3 are
+the two `[[export.destination]]` entries in `jiramd.toml`). There is no default —
+with none of these set the run stops immediately with an error, before
+contacting Jira.
 
 | # | Given | Destination | Layout | Links |
 |---|-------|-------------|--------|-------|
@@ -103,11 +110,13 @@ Starting from the root workitem, the tool:
 1. **Fetches the root issue** with all fields, comments, and attachments
 2. **Fetches all directly linked issues** (all link types: blocks, relates to, duplicates, etc.), plus issues whose *Parent Link* field points at the root. Links are followed one level only: the links of a linked issue are not.
 3. **Traverses all Epics** found in steps 1-2, recursively fetching children, grandchildren, etc. (stories, bugs, tasks, sub-tasks)
-4. **Fetches pull request info** for every issue via Jira's dev-status API. Only Bitbucket Server pull requests are requested; PRs from GitHub, GitLab or Bitbucket Cloud do not appear.
+4. **Fetches pull request info** for every issue via Jira's dev-status API, from every Git host connected to Jira (Bitbucket Server, GitHub, GitLab, …).
 5. **Anonymizes PII** — person names become `User-1`, `User-2` (consistent across the export), emails are scrubbed, @mentions are replaced
 
 Each issue is exported exactly once (deduplicated). If one issue fails to
-export, the error is listed at the end and the rest are still written.
+export, the error is listed at the end and the rest are still written. An
+attachment or pull-request request that fails is listed under *Incomplete*. Either
+makes the exit status 1.
 
 ## Output
 
@@ -249,25 +258,30 @@ removed in Jira between runs, that issue's directory is left behind from the
 previous export and has to be deleted by hand — the tool never removes a
 directory it did not just write.
 
-## Settings tied to one Jira site
+## Dynatrace settings: `jiramd.toml`
 
-This copy is set up for one Jira site, and pointing `SERVER` at another site is
-not enough:
+Everything specific to dt-rnd lives in `jiramd.toml`, read by jiramd:
 
-- **Links in the export** use `JIRA_BASE_URL` in `src/config.py`, not `SERVER`.
-  Change both.
-- **Custom field IDs** differ between sites. `FIELD_MAPPING` in `src/config.py`
-  lists them, and a few (Parent Link, Team, Status details, the assignee and
-  release-notes fields) are also used directly in the code. `CLAUDE.md` lists
-  where.
-- **Pull requests** are requested from Bitbucket Server only (`src/pr_fetcher.py`).
-- **Specs routing:** `PRODFB-` keys go to `ideas/` (`src/export_paths.py`), and
-  `runme.sh` expands `P-` to `PRODUCT-`.
+- **Destinations** — the two `[[export.destination]]` entries implement rules 2
+  and 3 above.
+- **Fields** — the frontmatter list, the Metadata block (with Team), and the
+  *Status Details* and *Release Notes* sections. Several custom fields share
+  their name with another field on dt-rnd, so they are listed by ID;
+  `.venv/bin/jiramd fields <text>` (with `JIRA_URL`, `JIRA_USER`, `JIRA_TOKEN`
+  set) shows names and IDs.
 
-On another site, a field ID that does not exist there is simply left empty, but
-one that exists with a different meaning is exported under the wrong name. A
-JQL query that names a field the site does not have prints a warning and the
-walk carries on with the parts of the query the site can answer.
+jiramd stops on a field the site does not have rather than silently leaving it
+out. Every key is described in jiramd's
+[configuration reference](https://github.com/ihudak/jiramd/blob/main/docs/configuration.md).
+
+Compared with the code this repository used to contain, one thing renders
+differently: inside *Release Notes*, there is no blank line between the
+relevance/version/category lines and the title.
+
+## Updating jiramd
+
+`requirements.txt` pins a jiramd release tag. To update, change the tag
+(`…@v0.1.0` → `…@v0.2.0`); the next `./runme.sh` installs it.
 
 ## Development
 
@@ -276,7 +290,7 @@ pip install -r requirements-dev.txt
 python -m pytest
 ```
 
-One test compares `src/jira_markup_converter.py` with the copy in the sibling
-`jira-bulk-import` project, and skips when that project is not checked out
-next to this one. `CLAUDE.md` describes the architecture and how to add a
-Jira field.
+The tests check that `src/main.py` translates this tool's command line and
+credentials for jiramd, and that `jiramd.toml` loads and routes exports as the
+table above says. Changes to how exports are made belong in
+[jiramd](https://github.com/ihudak/jiramd).

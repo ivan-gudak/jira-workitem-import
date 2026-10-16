@@ -1,151 +1,72 @@
 """
-Jira Workitem Deep Exporter
-Exports a single Jira workitem and its full dependency graph to markdown.
+Export a Jira workitem and its dependency graph to markdown, with jiramd.
+
+Keeps this tool's command line, credentials file and destinations, and runs
+jiramd with the Dynatrace settings in jiramd.toml:
+
+    python src/main.py PRODUCT-12345 [--export-dir=DIR] [--link-style=obsidian|github]
+
+Credentials: JIRA_SERVER, JIRA_EMAIL and JIRA_TOKEN when all three are set,
+otherwise .jira.config in the working directory.
 """
 
 import argparse
 import os
 import sys
-from datetime import datetime, timezone
+from pathlib import Path
+from typing import Mapping, Optional
 
-# Add src directory to path
-sys.path.insert(0, os.path.dirname(__file__))
-
-from jira_auth import JiraAuth
-from graph_walker import GraphWalker
-from markdown_exporter import MarkdownExporter, register_people, scrub_summaries
-from index_generator import generate_import_index, update_top_level_index
-from pii_scrubber import PiiScrubber
-from export_paths import ExportPathError, resolve_export_target, slugify
-from link_renderer import OutputProfile
-from config import JIRA_BASE_URL
+CONFIG = Path(__file__).resolve().parent.parent / "jiramd.toml"
 
 
-def main():
+def jiramd_argv(argv: list) -> list:
+    """This tool's arguments as a jiramd command line."""
     parser = argparse.ArgumentParser(
-        description="Export a Jira workitem and its full dependency graph to markdown."
-    )
-    parser.add_argument(
-        "jira_id",
-        help="Root Jira workitem ID (e.g., PRODUCT-12345)",
-    )
-    parser.add_argument(
-        "--export-dir",
-        default=None,
-        help="Output directory. Overrides SPECS_PATH and VAULT_PATH.",
-    )
-    parser.add_argument(
-        "--link-style",
-        choices=("obsidian", "github"),
-        default=None,
-        help="Link rendering. Defaults to github for SPECS_PATH, obsidian otherwise.",
-    )
-    args = parser.parse_args()
+        description="Export a Jira workitem and its full dependency graph to markdown.")
+    parser.add_argument("jira_id", help="Root Jira workitem ID (e.g., PRODUCT-12345)")
+    parser.add_argument("--export-dir", default=None, help="Output directory. Overrides SPECS_PATH and VAULT_PATH.")
+    parser.add_argument("--link-style", choices=("obsidian", "github"), default=None,
+                        help="Link rendering. Defaults to github for SPECS_PATH, obsidian otherwise.")
+    args = parser.parse_args(argv)
+    out = ["--config", str(CONFIG), "export", args.jira_id]
+    if args.export_dir is not None:
+        out += ["--export-dir", args.export_dir]
+    if args.link_style is not None:
+        out += ["--links", args.link_style]
+    return out
 
+
+def credentials(env: Mapping[str, str], cwd: Path) -> dict:
+    """JIRA_URL / JIRA_USER / JIRA_TOKEN for jiramd, from this tool's sources."""
+    if all(env.get(k) for k in ("JIRA_SERVER", "JIRA_EMAIL", "JIRA_TOKEN")):
+        return {"JIRA_URL": env["JIRA_SERVER"], "JIRA_USER": env["JIRA_EMAIL"], "JIRA_TOKEN": env["JIRA_TOKEN"]}
+    path = Path(cwd) / ".jira.config"
+    if not path.is_file():
+        return {}
+    values = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        key, sep, value = line.partition(":")
+        if sep and key.strip() in ("SERVER", "EMAIL", "TOKEN"):
+            values[key.strip()] = value.strip()
+    names = {"SERVER": "JIRA_URL", "EMAIL": "JIRA_USER", "TOKEN": "JIRA_TOKEN"}
+    return {names[k]: v for k, v in values.items() if v}
+
+
+def run(argv: Optional[list] = None, env: Optional[Mapping[str, str]] = None) -> int:
     try:
-        target = resolve_export_target(args.jira_id, args.export_dir, os.environ)
-    except ExportPathError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    if target.notice:
-        print(f"Note: {target.notice} Falling back to VAULT_PATH.")
-
-    style = args.link_style or ("github" if target.origin == "specs" else "obsidian")
-    profile = OutputProfile.for_style(style, JIRA_BASE_URL)
-
-    print("=" * 50)
-    if target.pending_name:
-        feature_dir = target.data_dir.parent
-        shown = feature_dir.with_name(f"{feature_dir.name}-<slug>") / target.data_dir.name
-        print(f"Destination: {shown}  (new folder, named from the ticket summary)")
-    else:
-        print(f"Destination: {target.data_dir}")
-    print(f"Source:      {target.origin}    Layout: {target.layout}    Links: {style}")
-    print("=" * 50)
-
-    # Authenticate
-    try:
-        auth = JiraAuth()
-        jira_client = auth.get_jira_client()
-        print(f"Connected to: {auth.server}\n")
-        # Map customfield ids to display names (one call) for the Details fallback
-        field_names = {f["id"]: f["name"] for f in jira_client.fields()}
-    except (FileNotFoundError, ValueError) as e:
-        print(f"Auth error: {e}")
-        sys.exit(1)
-
-    # Walk the graph
-    print("=" * 50)
-    print(f"Walking issue graph from: {args.jira_id}")
-    print("=" * 50)
-
-    walker = GraphWalker(jira_client)
-    try:
-        nodes = walker.walk(args.jira_id)
-    except ValueError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    if not nodes:
-        print("No issues found. Nothing to export.")
-        sys.exit(0)
-    # The ID as Jira spells it: `main.py product-1` still writes PRODUCT-1.
-    root = next(n for n in nodes.values() if n.role == "root")
-    jira_id = root.key
-
-    # Summaries are scrubbed before anything is written or slugged, and people
-    # are registered first so the scrubber knows their names.
-    scrubber = PiiScrubber()
-    register_people(nodes, scrubber, field_names)
-    scrub_summaries(nodes, scrubber)
-    if target.pending_name:
-        target = target.named(slugify(getattr(root.issue.fields, "summary", "") or ""), jira_id)
-
-    # Created after the graph walk succeeds, so a mistyped ID leaves nothing behind.
-    data_dir = target.data_dir
-
-    # Flat layout: the destination is already import-specific, so no <ID> level.
-    import_dir = data_dir if target.layout == "flat" else data_dir / jira_id
-    try:
-        import_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        print(f"Error: cannot create {import_dir}: {e}")
-        sys.exit(1)
-
-    print()
-    print("=" * 50)
-    print(f"Exporting {len(nodes)} issues to: {import_dir}")
-    print("=" * 50)
-
-    exporter = MarkdownExporter(jira_client, import_dir, scrubber, root_key=jira_id,
-                                field_names=field_names, profile=profile)
-    success, failed = exporter.export_all(nodes)
-
-    # Generate per-import index
-    profile.renderer.keys = set(nodes.keys())
-    index_content = generate_import_index(import_dir, nodes, jira_id,
-                                          links=profile.renderer, layout=target.layout,
-                                          imported_at=datetime.now(timezone.utc))
-    index_path = import_dir / f"{jira_id}-index.md"
-    index_path.write_text(index_content, encoding="utf-8")
-    print(f"\nImport index: {index_path}")
-
-    # The registry lists sibling imports; a flat destination holds exactly one.
-    if target.layout == "nested":
-        update_top_level_index(data_dir, links=profile.renderer)
-        print(f"Top-level index: {data_dir / 'export-index.md'}")
-
-    # Summary
-    print()
-    print("=" * 50)
-    print(f"Done. {success}/{len(nodes)} exported.")
-    if failed:
-        print(f"\nFailed ({len(failed)}):")
-        for key, err in failed:
-            print(f"  {key}: {err}")
-    print("=" * 50)
+        from jiramd.cli import main as jiramd_main
+    except ImportError:
+        print("Error: jiramd is not installed in this environment. Run ./runme.sh once, "
+              "or `pip install -r requirements.txt`.", file=sys.stderr)
+        return 1
+    env = dict(os.environ if env is None else env)
+    cwd = Path.cwd()
+    found = credentials(env, cwd)
+    if not found:
+        print(f"Note: no .jira.config in {cwd}, and JIRA_SERVER, JIRA_EMAIL, JIRA_TOKEN are not all set.",
+              file=sys.stderr)
+    return jiramd_main(jiramd_argv(sys.argv[1:] if argv is None else argv), env={**env, **found}, cwd=cwd)
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(run())

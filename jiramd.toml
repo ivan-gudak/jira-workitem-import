@@ -1,0 +1,57 @@
+# Dynatrace settings for jiramd (https://github.com/ihudak/jiramd).
+# Credentials are not here: runme.sh / src/main.py take them from .jira.config
+# or JIRA_SERVER / JIRA_EMAIL / JIRA_TOKEN, as before.
+#
+# Several custom fields share their name with another field on dt-rnd, so they
+# are listed by ID. `jiramd fields <text>` shows names and IDs.
+
+# 1. The specs repository: product feedback to ideas/, everything else to
+#    specifications/, one folder per root ticket named from its summary.
+[[export.destination]]
+path    = "${SPECS_PATH}"
+folder  = "{route}/{key}-{slug}/jira-import"
+route   = { "PRODFB-" = "ideas", "*" = "specifications" }
+require = ["git-root"]
+links   = "github"
+
+# 2. Otherwise the Obsidian vault.
+[[export.destination]]
+path = "${VAULT_PATH}/jira-products"
+
+[page]
+frontmatter = ["Key", "Issue Type", "Summary", "Status", "Assignee", "Reporter",
+               "customfield_21107",   # Architecture Assignee
+               "customfield_19400",   # Execution Assignee
+               "customfield_17800",   # Team
+               "Project", "Parent",
+               "customfield_17801",   # Parent Link
+               "Fix versions",
+               "customfield_12800",   # Rank
+               "customfield_18700",   # owning Program
+               "customfield_18701",   # tracking Programs
+               "Labels", "Resolution",
+               "customfield_15900",   # Relevant for release notes
+               "customfield_20300",   # Release Versions
+               "customfield_19500",   # Breaking Change
+               "customfield_22157",   # Change Type
+               "customfield_19502"]   # Release Notes Category
+metadata = ["Issue Type", "Status", "Assignee", "customfield_17800"]
+order    = ["metadata", "Status Details", "description", "attachments", "Release Notes",
+            "links", "pull-requests", "comments"]
+
+[[page.section]]
+title  = "Status Details"
+fields = ["customfield_19200"]
+
+[[page.section]]
+title  = "Release Notes"
+fields = ["customfield_15900", "customfield_22157", "customfield_20300",
+          "customfield_19502", "customfield_19701", "customfield_15000"]
+
+[page.section.labels]
+"customfield_15900" = "Relevant for release notes"
+"customfield_22157" = "Change type"
+"customfield_20300" = "Release versions"
+"customfield_19502" = "Category"
+"customfield_19701" = "Title"
+"customfield_15000" = "Summary"
