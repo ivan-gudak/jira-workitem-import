@@ -1,9 +1,10 @@
 """
 A markup converter that renders issue keys through a link renderer.
 
-`jira_markup_converter.py` is vendored — a byte-identical copy lives in the
-sibling jira-bulk-import project, and tests/test_jira_markup_converter.py
-guards the two against drifting apart. So the renderer hook lives here, in a
+`jira_markup_converter.py` is vendored — a copy lives in the sibling
+jira-bulk-import project, differing only in `_format_issue_link` and its
+comment, and tests/test_jira_markup_converter.py guards the two against
+drifting apart. So the renderer hook lives here, in a
 subclass, rather than as a parameter threaded through the shared file.
 
 Overriding `_format_issue_link` covers every site that renders a key: the bare
