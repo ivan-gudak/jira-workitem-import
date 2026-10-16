@@ -4,6 +4,12 @@ Exports a single Jira workitem and its full dependency graph to markdown — inc
 
 **Use case:** You close a PRODUCT-XXXXX feature ticket and need to write release notes, documentation, or a blog post. This tool exports the full context — the PRODUCT ticket, linked Epics, all stories/bugs/tasks under those Epics, comments, and PR references — so you can write accurate docs even when the implementation diverged from the original plan.
 
+## Requirements
+
+- Python 3.10 or later
+- A Jira Cloud account with read access to the tickets, and an API token for it
+- The Jira site this copy is configured for — see [Settings tied to one Jira site](#settings-tied-to-one-jira-site)
+
 ## Setup
 
 ```bash
@@ -32,18 +38,22 @@ TOKEN: your_api_token_here
 
 Generate an API token at: https://id.atlassian.com/manage-profile/security/api-tokens
 
-Alternatively, set environment variables `JIRA_SERVER`, `JIRA_EMAIL`, `JIRA_TOKEN` (they take precedence).
+Alternatively, set environment variables `JIRA_SERVER`, `JIRA_EMAIL`, `JIRA_TOKEN`. They take precedence only when all three are set; if any is missing, `.jira.config` is read and its values are used.
 
 ## Usage
 
 ```bash
 # Recommended: use the wrapper script (handles venv + install automatically)
 ./runme.sh PRODUCT-12345
+./runme.sh P-12345          # shorthand: P- expands to PRODUCT-
 ```
 
 Extra arguments are forwarded, so `./runme.sh PRODUCT-12345 --link-style=github` works.
+The script runs `python -m venv`, so it needs a `python` (3.10+) on your `PATH`.
+It rebuilds `.venv` when the interpreter in it does not run on this machine.
 
-Alternatively, invoke Python directly after activating the venv:
+Alternatively, invoke Python directly after activating the venv. Run it from the
+project root, where `.jira.config` is read:
 
 ```bash
 source .venv/bin/activate
@@ -91,12 +101,13 @@ are not scrubbed and stay in the slug.
 Starting from the root workitem, the tool:
 
 1. **Fetches the root issue** with all fields, comments, and attachments
-2. **Fetches all directly linked issues** (all link types: blocks, relates to, duplicates, etc.)
+2. **Fetches all directly linked issues** (all link types: blocks, relates to, duplicates, etc.), plus issues whose *Parent Link* field points at the root. Links are followed one level only: the links of a linked issue are not.
 3. **Traverses all Epics** found in steps 1-2, recursively fetching children, grandchildren, etc. (stories, bugs, tasks, sub-tasks)
-4. **Fetches pull request info** for every issue via Jira's dev-status API
+4. **Fetches pull request info** for every issue via Jira's dev-status API. Only Bitbucket Server pull requests are requested; PRs from GitHub, GitLab or Bitbucket Cloud do not appear.
 5. **Anonymizes PII** — person names become `User-1`, `User-2` (consistent across the export), emails are scrubbed, @mentions are replaced
 
-Each issue is exported exactly once (deduplicated).
+Each issue is exported exactly once (deduplicated). If one issue fails to
+export, the error is listed at the end and the rest are still written.
 
 ## Output
 
@@ -160,8 +171,12 @@ Each `<KEY>.md` includes:
 - YAML frontmatter (all Jira fields), ending with `updated:` — Jira's last-change time for the ticket, in UTC, so a reader can tell whether Jira changed since the import
 - Metadata section (type, status, assignee, team, parent)
 - Status details and description (converted from Jira markup)
+- **Details**, in place of an empty description — every populated custom field
+  not already shown elsewhere, one subsection each. Tickets such as RFEs keep
+  their content in custom fields and leave the description blank.
 - Attachments (embedded images, plus a file list)
-- Release notes (if present)
+- Release notes — relevance, release versions, change type, category, title and
+  summary — when the ticket has any of them
 - Linked issues (grouped by link type)
 - Pull requests (title, URL, repo, branch, status)
 - Comments (transcluded from `<KEY>-comments.md`, or inlined — see below)
@@ -233,3 +248,36 @@ Only the folders of issues in the *current* graph are recreated. If a link is
 removed in Jira between runs, that issue's directory is left behind from the
 previous export and has to be deleted by hand — the tool never removes a
 directory it did not just write.
+
+## Settings tied to one Jira site
+
+This copy is set up for one Jira site, and pointing `SERVER` at another site is
+not enough:
+
+- **Links in the export** use `JIRA_BASE_URL` in `src/config.py`, not `SERVER`.
+  Change both.
+- **Custom field IDs** differ between sites. `FIELD_MAPPING` in `src/config.py`
+  lists them, and a few (Parent Link, Team, Status details, the assignee and
+  release-notes fields) are also used directly in the code. `CLAUDE.md` lists
+  where.
+- **Pull requests** are requested from Bitbucket Server only (`src/pr_fetcher.py`).
+- **Specs routing:** `PRODFB-` keys go to `ideas/` (`src/export_paths.py`), and
+  `runme.sh` expands `P-` to `PRODUCT-`.
+
+On another site, a field ID that does not exist there is simply left empty, but
+one that exists with a different meaning is exported under the wrong name. The
+Parent Link query for the root's children prints a warning and carries on; the
+one inside the Epic traversal does not, so an export that reaches an Epic stops
+with a JQL error.
+
+## Development
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+One test compares `src/jira_markup_converter.py` with the copy in the sibling
+`jira-bulk-import` project, and skips when that project is not checked out
+next to this one. `CLAUDE.md` describes the architecture and how to add a
+Jira field.
