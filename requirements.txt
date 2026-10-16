@@ -1,2 +1,2 @@
 # jiramd does the work; this repository holds the Dynatrace settings.
-jiramd @ git+https://github.com/ihudak/jiramd@v0.1.0
+jiramd @ git+https://github.com/ihudak/jiramd@v0.1.1
