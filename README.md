@@ -49,7 +49,7 @@ Alternatively, set environment variables `JIRA_SERVER`, `JIRA_EMAIL`, `JIRA_TOKE
 ```
 
 Extra arguments are forwarded, so `./runme.sh PRODUCT-12345 --link-style=github` works.
-The script runs `python -m venv`, so it needs a `python` (3.10+) on your `PATH`.
+The script runs `python3 -m venv`, so it needs a `python3` (3.10+) on your `PATH`.
 It rebuilds `.venv` when the interpreter in it does not run on this machine.
 
 Alternatively, invoke Python directly after activating the venv. Run it from the
@@ -265,10 +265,9 @@ not enough:
   `runme.sh` expands `P-` to `PRODUCT-`.
 
 On another site, a field ID that does not exist there is simply left empty, but
-one that exists with a different meaning is exported under the wrong name. The
-Parent Link query for the root's children prints a warning and carries on; the
-one inside the Epic traversal does not, so an export that reaches an Epic stops
-with a JQL error.
+one that exists with a different meaning is exported under the wrong name. A
+JQL query that names a field the site does not have prints a warning and the
+walk carries on with the parts of the query the site can answer.
 
 ## Development
 

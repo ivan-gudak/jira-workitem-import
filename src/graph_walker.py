@@ -107,8 +107,14 @@ class GraphWalker:
     def _fetch_epic_children(self, epic_key: str) -> None:
         """Recursively fetch all children of an Epic via JQL."""
         # Include cf[17801] for older Jira items that store the hierarchy via Parent Link
-        jql = f'"Epic Link" = {epic_key} OR parent = {epic_key} OR cf[17801] = {epic_key}'
-        children = self._search_jql(jql)
+        clauses = (f'"Epic Link" = {epic_key}', f'parent = {epic_key}', f'cf[17801] = {epic_key}')
+        try:
+            children = self._search_jql(" OR ".join(clauses))
+        except Exception as e:
+            # Jira rejects the whole query when one field is unknown to the
+            # site, so ask clause by clause and keep what the site can answer.
+            print(f"  Warning: Epic query failed ({e}); retrying one clause at a time")
+            children = [c for clause in clauses for c in self._search_jql_safe(clause)]
 
         for child in children:
             if child.key not in self.nodes:
