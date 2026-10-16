@@ -1,2 +1,2 @@
-jira>=3.8.0
-requests>=2.31.0
+# jiramd does the work; this repository holds the Dynatrace settings.
+jiramd @ git+https://github.com/ihudak/jiramd@v0.1.0
