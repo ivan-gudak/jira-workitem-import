@@ -19,6 +19,7 @@ from comments_handler import CommentsHandler
 from pii_scrubber import PiiScrubber
 from pr_fetcher import fetch_pull_requests, format_prs_markdown
 from graph_walker import IssueNode
+from jira_auth import describe
 
 
 def register_people(nodes: dict[str, IssueNode], scrubber: PiiScrubber,
@@ -152,8 +153,8 @@ class MarkdownExporter:
                 self._export_one(node, nodes)
                 success += 1
             except Exception as e:
-                print(f"  ERROR: {e}")
-                failed.append((key, str(e)))
+                print(f"  ERROR: {describe(e)}")
+                failed.append((key, describe(e)))
         return success, failed
 
     def _export_one(self, node: IssueNode, all_nodes: dict[str, IssueNode]) -> None:

@@ -7,6 +7,8 @@ import requests
 from typing import Any
 from dataclasses import dataclass
 
+from jira_auth import describe
+
 
 @dataclass
 class PullRequest:
@@ -41,7 +43,7 @@ def fetch_pull_requests(jira_client: Any, issue_id: str) -> list[PullRequest]:
         resp.raise_for_status()
         data = resp.json()
     except Exception as e:
-        print(f"    Warning: Could not fetch PR info: {e}")
+        print(f"    Warning: Could not fetch PR info: {describe(e)}")
         return []
 
     prs = []

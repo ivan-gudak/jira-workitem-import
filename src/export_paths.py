@@ -32,13 +32,14 @@ class ExportTarget:
     notice: Optional[str] = None   # why SPECS_PATH was not used
     pending_name: bool = False     # the feature folder is new; name it from the summary
 
-    def named(self, slug: str) -> "ExportTarget":
-        """Name a pending feature folder <ID>-<slug>; an empty slug keeps <ID>."""
+    def named(self, slug: str, key: Optional[str] = None) -> "ExportTarget":
+        """Name a pending feature folder <ID>-<slug>; an empty slug keeps <ID>.
+        `key` is the ID as Jira spells it, when it differs from what was typed."""
         if not self.pending_name:
             return self
         feature_dir = self.data_dir.parent
-        if slug:
-            feature_dir = feature_dir.with_name(f"{feature_dir.name}-{slug}")
+        base = key or feature_dir.name
+        feature_dir = feature_dir.with_name(f"{base}-{slug}" if slug else base)
         return replace(self, data_dir=feature_dir / self.data_dir.name, pending_name=False)
 
 

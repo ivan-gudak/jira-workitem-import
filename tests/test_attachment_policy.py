@@ -342,3 +342,23 @@ def test_uppercase_image_extensions_are_classified_as_images(tmp_path):
     assert "![SHOT.PNG](attachments/SHOT.PNG)" in md
     assert AttachmentHandler._is_image("SHOT.PNG") is True
     assert AttachmentHandler._is_image("notes.TXT") is False
+
+
+# --- Names from Jira are file names, never paths --------------------------------
+
+import pytest
+
+
+@pytest.mark.parametrize("remote, local", [
+    ("../escaped.txt", "escaped.txt"),
+    ("/tmp/absolute.txt", "absolute.txt"),
+    ("..\\windows.txt", "windows.txt"),
+    ("a/b/nested.txt", "nested.txt"),
+    ("..", "attachment"),
+])
+def test_an_attachment_name_cannot_leave_the_attachments_folder(tmp_path, remote, local):
+    h = handler(tmp_path / "ticket", None)
+    images, others = h.download_attachments(FakeIssue([FakeAttachment(remote)]))
+    assert others == [local]
+    written = [p for p in tmp_path.rglob("*") if p.is_file()]
+    assert written == [tmp_path / "ticket" / "attachments" / local]

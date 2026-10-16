@@ -392,3 +392,19 @@ def test_ticket_pages_carry_no_names_from_summaries(run_main, monkeypatch, tmp_p
     for page in (root_page, linked_page):
         assert "Jane Doe" not in page
         assert "jane@example.com" not in page
+
+
+def test_a_lowercase_key_exports_under_the_key_jira_returns(run_main, monkeypatch, tmp_path):
+    class Walker:
+        def __init__(self, client):
+            pass
+
+        def walk(self, jira_id):
+            return {"PRODUCT-1": FakeNode("PRODUCT-1", FakeIssue("PRODUCT-1", "Epic"), "root")}
+
+    monkeypatch.setattr(main_module, "GraphWalker", Walker)
+    vault = make_vault(tmp_path)
+    seen = run_main(["product-1"], {"VAULT_PATH": str(vault)})
+    assert seen["import_dir"] == vault / "jira-products" / "PRODUCT-1"
+    assert seen["root_key"] == "PRODUCT-1"
+    assert (vault / "jira-products" / "PRODUCT-1" / "PRODUCT-1-index.md").is_file()
